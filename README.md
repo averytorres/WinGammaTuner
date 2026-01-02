@@ -1,35 +1,50 @@
 # WinGammaTuner
 
 **WinGammaTuner** is a Windows utility for real-time display gamma and color curve
-control using the Win32 GDI gamma ramp API. It allows precise, low-latency tuning
-of display output through live LUT generation, with instant profile switching,
+control using the Win32 GDI gamma ramp API. It provides low-latency, system-wide
+display tuning through live 256-step LUT generation, with instant profile switching,
 global hotkeys, and persistent configuration.
 
-The tool is designed for users who want fine-grained control over display behavior
-in different lighting conditions, with separate **INDOOR** and **OUTDOOR** profiles
-that can be tuned independently and toggled instantly.
+The tool is designed with a strong focus on **competitive FPS visibility**, while
+preserving contrast, highlight stability, **UI legibility**, and predictable output.
+Two independent profiles — **INDOOR** and **OUTDOOR** — can be tuned separately and
+toggled instantly to adapt to different lighting conditions and use cases.
+
+---
 
 ## 🔧 Features
 
 - Real-time display gamma ramp control via Windows GDI (`SetDeviceGammaRamp`)
-- Parametric 256-step LUT generation with:
-  - Gamma exponent and offset
-  - Shadow and midtone boosting
-  - Highlight compression to reduce clipping
+- Parametric 256-step LUT generation including:
+  - Gamma exponent with optional offset
+  - Black floor lift for shadow detail preservation
+  - Nonlinear shadow-region lift with configurable cutoff
+  - **Shadow-only perceptual micro-contrast shaping (logarithmic)**
+  - Optional midtone shaping (advanced)
+  - Highlight compression with **near-white (UI / HUD) preservation**
   - Global vibrance scaling
-  - Independent RGB channel multipliers
+  - Global RGB channel multipliers
+  - Shadow-only **luminance bias** for silhouette clarity (FPS-safe)
+  - Optional shadow-only chroma suppression for haze reduction
+  - ✅ **Global Shadow Pop Strength modifier** for real-time silhouette & clarity boost
 - Two independent profiles:
-  - **INDOOR** (controlled / low-light environments)
-  - **OUTDOOR** (bright or high-glare environments)
+  - **INDOOR** — controlled or low-light environments
+  - **OUTDOOR** — bright or high-glare environments
 - Instant profile switching via global hotkeys
 - Lightweight Tkinter GUI with live updates
 - Modifier-aware sliders for precision tuning:
-  - Normal drag for full-range adjustment
-  - **Shift + drag** for controlled coarse interpolation
-  - **Ctrl + drag** for fine-grained micro-adjustments
+  - Normal drag: full-range adjustment
+  - **Shift + drag**: medium-granularity interpolation
+  - **Ctrl + drag**: fine-granularity micro-adjustments
+- Range-aware slider granularity with quantized value display
+- Optional **Advanced Controls** tier:
+  - Reveals high-impact parameters such as shadow RGB bias
+  - Hidden advanced controls remain active to ensure stable output
 - Persistent JSON configuration with debounced auto-save
 - Efficient updates using cached curves and CRC-based ramp validation
 - Automatic restoration of the identity gamma ramp when no profile is active
+
+---
 
 ## 🖥 Requirements
 
@@ -37,41 +52,56 @@ that can be tuned independently and toggled instantly.
 - Python 3.9+
 - Display driver supporting `SetDeviceGammaRamp`
 - Python dependencies:
-  ```bash
-  pip install numpy pynput orjson
-  
+
+```bash
+pip install numpy pynput orjson
 ## 🚀 Usage
 
-1. Run the script:
-   ```bash
-   python gamma_control.py
-   
-Use global hotkeys:
-- `F6` → Open or show settings GUI
-- `F8` → Toggle **INDOOR** profile
-- `F9` → Toggle **OUTDOOR** profile
+### Run the script
 
-Adjust parameters in the GUI:
-- Changes apply instantly
-- Configuration is saved automatically
-- Only one profile can be active at a time
-- Disabling all profiles restores the default (identity) gamma ramp
-- Sliders support modifier-based precision control:
-  - Normal drag: full-range adjustment
-  - **Shift + drag**: controlled coarse interpolation
-  - **Ctrl + drag**: fine-grained micro-adjustments
+```bash
+python gamma_control.py
+### 🔑 Global hotkeys
 
-## ⚠️ Notes & Warnings
+- **F6** → Open or show settings GUI  
+- **F8** → Toggle **INDOOR** profile  
+- **F9** → Toggle **OUTDOOR** profile  
 
-- Gamma ramps affect the global display output at the driver level
-- Extreme values may cause banding, clipping, or eye strain
-- Not recommended for use over Remote Desktop or unsupported GPUs
+---
 
-## 📁 Files
+### 🛠️ Adjust parameters in the GUI
 
-- `gamma_control.py` — Main application script
-- `gamma_config.json` — Auto-generated persistent configuration file
+- Changes apply instantly  
+- Configuration is saved automatically  
+- Only one profile can be active at a time  
+- Disabling all profiles restores the identity gamma ramp  
 
-## 📄 License
+---
+
+### 🎚️ Slider precision controls
+
+- **Normal drag**: full-range adjustment  
+- **Shift + drag**: controlled interpolation  
+- **Ctrl + drag**: fine-grained micro-adjustments  
+
+---
+
+### ⚠️ Notes & Warnings
+
+- Gamma ramps affect the global display output at the driver level  
+- Extreme values may cause banding, clipping, or eye strain  
+- Advanced controls can significantly alter visual output  
+- Not recommended for use over Remote Desktop or unsupported GPUs  
+
+---
+
+### 📁 Files
+
+- `gamma_control.py` — Main application script  
+- `gamma_config.json` — Auto-generated persistent configuration file  
+
+---
+
+### 📄 License
 
 MIT
