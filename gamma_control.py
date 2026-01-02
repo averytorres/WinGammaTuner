@@ -78,6 +78,7 @@ from functools import lru_cache
 from threading import Lock, Timer
 from enum import Enum
 import zlib
+import atexit
 
 import numpy as np
 import tkinter as tk
@@ -228,6 +229,7 @@ class GammaState:
         self.timer.start()
 
 gamma_state = GammaState()
+atexit.register(lambda: gamma_state.apply(identity_ramp()))
 
 # ================= CANVAS SLIDER =================
 class CanvasSlider(tk.Canvas):
@@ -239,7 +241,6 @@ class CanvasSlider(tk.Canvas):
 
         self.min = min_val
         self.max = max_val
-        self.value = value
         self.command = command
         self.width = width
         self.usable = width - 12
@@ -253,31 +254,32 @@ class CanvasSlider(tk.Canvas):
         self.bind("<ButtonPress-1>", self.start_drag)
         self.bind("<B1-Motion>", self.drag)
 
-        self.draw()
+        self.set_value(value, notify=False)
 
     def draw(self):
         t = (self.value - self.min) / (self.max - self.min)
         x = int(t * self.usable)
         self.coords(self.thumb, x, 4, x + 12, 16)
 
+    def set_value(self, value, notify=True):
+        self.value = float(np.clip(value, self.min, self.max))
+        self.draw()
+        if notify and self.command:
+            self.command(self.value)
+
     def start_drag(self, e):
         self.drag(e)
 
     def drag(self, e):
         t = np.clip(e.x / self.usable, 0.0, 1.0)
+        target = self.min + t * (self.max - self.min)
 
-        # modifier scaling around current value
         if e.state & 0x0004:      # Ctrl
-            t = self._lerp(self.value, self.min + t * (self.max - self.min), 0.05)
+            target = self._lerp(self.value, target, 0.05)
         elif e.state & 0x0001:    # Shift
-            t = self._lerp(self.value, self.min + t * (self.max - self.min), 0.2)
-        else:
-            t = self.min + t * (self.max - self.min)
+            target = self._lerp(self.value, target, 0.2)
 
-        self.value = float(np.clip(t, self.min, self.max))
-        self.draw()
-        if self.command:
-            self.command(self.value)
+        self.set_value(target)
 
     @staticmethod
     def _lerp(a, b, f):
@@ -327,9 +329,10 @@ def rebuild_gui():
                  bg=bg, fg="#aaa",
                  width=8, anchor="e").pack(side=tk.LEFT)
 
-        tk.Button(row, text="Reset", bg=btn, fg=fg, width=6,
-                  command=lambda: on_change(default_config[key])
-                  ).pack(side=tk.LEFT, padx=(6, 0))
+        tk.Button(
+            row, text="Reset", bg=btn, fg=fg, width=6,
+            command=lambda cs=cs, k=key: cs.set_value(default_config[k])
+        ).pack(side=tk.LEFT, padx=(6, 0))
 
     sliders = [
         ("Gamma", f"GAMMA_{m}", 0.75, 1.35, "{:.3f}"),
