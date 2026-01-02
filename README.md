@@ -20,8 +20,10 @@ toggled instantly to adapt to different lighting conditions and use cases.
   - Black floor lift for shadow detail preservation
   - Nonlinear shadow-region lift with configurable cutoff
   - **Shadow-only perceptual micro-contrast shaping (logarithmic)**
+  - ✅ **Optional mid-shadow sigmoid contrast shaping** for enhanced silhouette separation
   - Optional midtone shaping (advanced)
   - Highlight compression with **near-white (UI / HUD) preservation**
+  - ✅ Configurable HUD / highlight clamp to prevent UI distortion
   - Global vibrance scaling
   - Global RGB channel multipliers
   - Shadow-only **luminance bias** for silhouette clarity (FPS-safe)
@@ -42,6 +44,7 @@ toggled instantly to adapt to different lighting conditions and use cases.
   - Hidden advanced controls remain active to ensure stable output
 - Persistent JSON configuration with debounced auto-save
 - Efficient updates using cached curves and CRC-based ramp validation
+- ✅ Threaded execution via `ThreadPoolExecutor` to avoid blocking UI or hotkey input
 - Automatic restoration of the identity gamma ramp when no profile is active
 
 ---
@@ -57,19 +60,17 @@ toggled instantly to adapt to different lighting conditions and use cases.
 pip install numpy pynput orjson
 ## 🚀 Usage
 
-### Run the script
+### ▶️ Run the script
 
 ```bash
 python gamma_control.py
 ### 🔑 Global hotkeys
 
-- **F6** → Open or show settings GUI  
-- **F8** → Toggle **INDOOR** profile  
-- **F9** → Toggle **OUTDOOR** profile  
-
+F6  → Open or show settings GUI  
+F8  → Toggle INDOOR profile  
+F9  → Toggle OUTDOOR profile  
 ---
-
-### 🛠️ Adjust parameters in the GUI
+🛠️ Adjust Parameters in the GUI
 
 - Changes apply instantly  
 - Configuration is saved automatically  
@@ -79,14 +80,12 @@ python gamma_control.py
 ---
 
 ### 🎚️ Slider precision controls
-
-- **Normal drag**: full-range adjustment  
-- **Shift + drag**: controlled interpolation  
-- **Ctrl + drag**: fine-grained micro-adjustments  
-
 ---
+- Normal drag      → full-range adjustment  
+- Shift + drag     → controlled interpolation  
+- Ctrl  + drag     → fine-grained micro-adjustments  
 
-### ⚠️ Notes & Warnings
+### ⚠️ Notes & Warning
 
 - Gamma ramps affect the global display output at the driver level  
 - Extreme values may cause banding, clipping, or eye strain  
@@ -96,11 +95,9 @@ python gamma_control.py
 ---
 
 ### 📁 Files
-
-- `gamma_control.py` — Main application script  
-- `gamma_config.json` — Auto-generated persistent configuration file  
-
 ---
+- gamma_control.py      — Main application script  
+- gamma_config.json     — Auto-generated persistent configuration file  
 
 ### 📄 License
 
