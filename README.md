@@ -6,9 +6,9 @@ display tuning through live 256-step LUT generation, with instant profile switch
 global hotkeys, and persistent configuration.
 
 The tool is designed with a strong focus on **competitive FPS visibility**, while
-preserving contrast, highlight stability, **UI legibility**, and predictable output.
+preserving contrast, highlight stability, UI legibility, and predictable output.
 Two independent profiles — **INDOOR** and **OUTDOOR** — can be tuned separately and
-toggled instantly to adapt to different lighting conditions and use cases.
+toggled instantly to adapt to different lighting conditions.
 
 ---
 
@@ -19,16 +19,20 @@ toggled instantly to adapt to different lighting conditions and use cases.
   - Gamma exponent with optional offset
   - Black floor lift for shadow detail preservation
   - Nonlinear shadow-region lift with configurable cutoff
-  - **Shadow-only perceptual micro-contrast shaping (logarithmic)**
-  - ✅ **Optional mid-shadow sigmoid contrast shaping** for enhanced silhouette separation
+  - Shadow-only perceptual contrast shaping (power-based)
+  - Optional mid-shadow sigmoid contrast shaping for silhouette separation
   - Optional midtone shaping (advanced)
-  - Highlight compression with **near-white (UI / HUD) preservation**
-  - ✅ Configurable HUD / highlight clamp to prevent UI distortion
+  - Highlight compression with near-white (UI / HUD) preservation
+  - Configurable HUD / highlight clamp
   - Global vibrance scaling
   - Global RGB channel multipliers
-  - Shadow-only **luminance bias** for silhouette clarity (FPS-safe)
-  - Optional shadow-only chroma suppression for haze reduction
-  - ✅ **Global Shadow Pop Strength modifier** for real-time silhouette & clarity boost
+  - Shadow-only color bias for silhouette clarity (FPS-safe)
+  - Optional opponent-channel shadow tuning with luminance preservation
+  - Global Shadow Pop Strength modifier
+- Optional scene-aware enhancements (disabled by default):
+  - Histogram-aware shadow adaptation
+  - Edge-aware shadow contrast scaling
+  - HUD-aware highlight exclusion
 - Two independent profiles:
   - **INDOOR** — controlled or low-light environments
   - **OUTDOOR** — bright or high-glare environments
@@ -36,15 +40,11 @@ toggled instantly to adapt to different lighting conditions and use cases.
 - Lightweight Tkinter GUI with live updates
 - Modifier-aware sliders for precision tuning:
   - Normal drag: full-range adjustment
-  - **Shift + drag**: medium-granularity interpolation
-  - **Ctrl + drag**: fine-granularity micro-adjustments
-- Range-aware slider granularity with quantized value display
-- Optional **Advanced Controls** tier:
-  - Reveals high-impact parameters such as shadow RGB bias
-  - Hidden advanced controls remain active to ensure stable output
+  - Shift + drag: medium-granularity
+  - Ctrl + drag: fine-grained adjustment
 - Persistent JSON configuration with debounced auto-save
-- Efficient updates using cached curves and CRC-based ramp validation
-- ✅ Threaded execution via `ThreadPoolExecutor` to avoid blocking UI or hotkey input
+- Cached curve generation with CRC-based gamma ramp validation
+- Threaded execution to avoid blocking UI or hotkey handling
 - Automatic restoration of the identity gamma ramp when no profile is active
 
 ---
@@ -54,53 +54,38 @@ toggled instantly to adapt to different lighting conditions and use cases.
 - Windows OS
 - Python 3.9+
 - Display driver supporting `SetDeviceGammaRamp`
-- Python dependencies:
 
 ```bash
 pip install numpy pynput orjson
 ```
-## 🚀 Usage
-
-### ▶️ Run the script
+---
+## Usage
 
 ```bash
 python gamma_control.py
 ```
-### 🔑 Global hotkeys
-
-F6  → Open or show settings GUI  
-F8  → Toggle INDOOR profile  
-F9  → Toggle OUTDOOR profile  
 ---
-🛠️ Adjust Parameters in the GUI
+## Global hotkeys
 
-- Changes apply instantly  
-- Configuration is saved automatically  
-- Only one profile can be active at a time  
-- Disabling all profiles restores the identity gamma ramp  
+- F6 → Open or show settings GUI
+- F8 → Toggle INDOOR profile
+- F9 → Toggle OUTDOOR profile
 
----
+Only one profile may be active at a time. Disabling all profiles restores the
+identity gamma ramp.
 
-### 🎚️ Slider precision controls
----
-- Normal drag      → full-range adjustment  
-- Shift + drag     → controlled interpolation  
-- Ctrl  + drag     → fine-grained micro-adjustments  
+## Notes
 
-### ⚠️ Notes & Warning
+- Gamma ramps affect global display output at the driver level
+- Extreme values may cause banding, clipping, or eye strain
+- Advanced controls can significantly alter visual output
+- Not recommended for Remote Desktop or unsupported GPUs
 
-- Gamma ramps affect the global display output at the driver level  
-- Extreme values may cause banding, clipping, or eye strain  
-- Advanced controls can significantly alter visual output  
-- Not recommended for use over Remote Desktop or unsupported GPUs  
+## Files
 
----
+- gamma_control.py — main application
+- gamma_config.json — auto-generated persistent configuration
 
-### 📁 Files
----
-- gamma_control.py      — Main application script  
-- gamma_config.json     — Auto-generated persistent configuration file  
-
-### 📄 License
+## License
 
 MIT

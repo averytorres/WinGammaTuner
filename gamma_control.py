@@ -22,29 +22,34 @@ Core Capabilities:
   - Gamma exponent with optional offset
   - Black floor lift for shadow detail preservation
   - Nonlinear shadow-region lift with configurable cutoff
-  - Shadow-only perceptual micro-contrast shaping (logarithmic)
-  - ✅ Optional mid-shadow sigmoid boost for silhouette contrast (**new**)
+  - Shadow-only perceptual contrast shaping (power-based)
+  - Optional mid-shadow sigmoid boost for silhouette contrast
   - Optional midtone shaping (advanced)
   - Highlight compression with near-white (UI/HUD) preservation
-  - ✅ Configurable highlight clamp to preserve HUD/UI brightness (**new**)
+  - Configurable highlight clamp to preserve HUD/UI brightness
   - Global vibrance scaling
   - Global RGB multipliers
   - Shadow-only color bias for silhouette clarity (FPS-safe)
   - Shadow-only RGB channel bias (advanced)
-  - ✅ Global Shadow Pop Strength modifier (FPS visibility enhancer)
+  - Global Shadow Pop Strength modifier (FPS visibility enhancer)
+  - Optional histogram-aware shadow adaptation (scene luminance–responsive)
+  - Optional edge-aware shadow contrast preservation
+  - Optional opponent-channel shadow tuning with luminance conservation
+  - Optional HUD-aware highlight exclusion with configurable threshold
 - Real-time application with:
   - CRC-based gamma ramp signature detection
   - Debounced rebuilds to prevent excessive GDI calls
   - Cached base curves for efficient recomputation
-  - ✅ Threaded execution via concurrent.futures for responsive updates (**new**)
+  - Lightweight background threading for scene analysis and gamma application
+  - Low-frequency scene analysis for adaptive tuning (FPS-safe, foreground-only)
 - Persistent JSON-backed configuration with auto-save debounce
 - Lightweight Tkinter GUI for live parameter tuning
-- ✅ Fully refactored, dynamic slider system with easy extensibility (**new**)
+- Fully refactored, dynamic slider system with easy extensibility
 - Global hotkeys for profile toggling and GUI visibility
 
 Control Tiers:
 - FPS Controls:
-  - Shadow visibility, cutoff, micro-contrast, desaturation, silhouette bias,
+  - Shadow visibility, cutoff, contrast shaping, desaturation, silhouette bias,
     sigmoid shaping, and contrast-safe tuning designed for competitive play
 - Advanced Controls (optional):
   - Shadow RGB bias, midtone shaping, and other high-impact adjustments
@@ -58,7 +63,7 @@ identity gamma ramp.
 
 Global Modifiers:
 - Shadow Pop Strength (0.0–1.0):
-  - Applies contrast and silhouette enhancements on top of active profile
+  - Applies contrast and silhouette enhancements on top of the active profile
   - Tuned for shadow clarity and FPS-friendly visibility
 
 Hotkeys:
@@ -74,10 +79,10 @@ GUI Interaction:
 - Slider granularity is range-aware and display values are quantized to
   perceptually meaningful step sizes
 - Value displays provide visual feedback during active adjustment
-- ✅ GUI includes toggles for advanced controls and HUD highlight preservation (**new**)
+- GUI includes toggles for advanced controls and HUD highlight preservation
 
 Runtime Behavior:
-- LUTs are rebuilt only when parameters or active profile change
+- LUTs are rebuilt only when parameters or the active profile change
 - Identical gamma ramps are skipped using a fast CRC signature check
 - GUI-driven updates are applied live and persisted automatically
 - Identity ramp is restored on exit or when no profile is active
@@ -111,6 +116,7 @@ import tkinter as tk
 from tkinter import ttk
 from pynput import keyboard
 import orjson
+import time
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
@@ -163,6 +169,32 @@ default_config = {
     "SHADOW_SIGMOID_BOOST_OUTDOOR": 0.0,
 }
 
+# === Adaptive Analysis Features (NEW, SAFE DEFAULTS OFF) ===
+
+default_config.update({
+    # Histogram-aware shadow shaping
+    "HISTOGRAM_ADAPTIVE": False,
+    "HISTOGRAM_STRENGTH": 0.35,
+    "HISTOGRAM_MIN_LUMA": 0.10,
+    "HISTOGRAM_MAX_LUMA": 0.55,
+
+    # Edge-preserving shadow contrast
+    "EDGE_AWARE_SHADOWS": False,
+    "EDGE_STRENGTH": 0.40,
+    "EDGE_MIN": 0.05,
+    "EDGE_MAX": 0.35,
+
+    # Color opponent channel tuning
+    "OPPONENT_TUNING": False,
+    "OPPONENT_STRENGTH": 0.25,
+
+    # HUD-aware exclusion (gamma-safe approximation)
+    "HUD_EXCLUSION": False,
+    "HUD_EXCLUSION_STRENGTH": 0.60,
+    "HUD_EXCLUSION_THRESHOLD": 0.90,
+})
+
+
 class Mode(Enum):
     INDOOR = "indoor"
     OUTDOOR = "outdoor"
@@ -211,6 +243,87 @@ def to_ramp(arr):
 def identity_ramp():
     return np.concatenate([np.linspace(0, 65535, 256, dtype=np.uint16)] * 3)
 
+# === LOW-RES DESKTOP SAMPLING (FPS-SAFE) ===
+
+class SceneAnalyzer:
+    def __init__(self):
+        self.avg_luma = 0.5
+        self.shadow_density = 0.0
+        self.edge_strength = 0.0
+        self.lock = Lock()
+        self.last_update = 0.0
+        self.last_delta = 0.2
+
+    def update(self):
+        now = time.time()
+        delta = now - self.last_update
+
+        # Freeze metrics if updates stall badly (FPS drop / hitch)
+        if delta > 0.6:
+            self.last_update = now
+            self.last_delta = delta
+            return
+
+        # 5 Hz cap
+        if delta < 0.2:
+            return
+
+        self.last_update = now
+        self.last_delta = delta
+
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd or user32.IsIconic(hwnd):
+            return
+
+        try:
+            # Grab tiny desktop sample via GDI
+            w, h = 64, 64
+            memdc = gdi32.CreateCompatibleDC(hdc)
+            bmp = gdi32.CreateCompatibleBitmap(hdc, w, h)
+            gdi32.SelectObject(memdc, bmp)
+            gdi32.StretchBlt(
+                memdc, 0, 0, w, h,
+                hdc, 0, 0,
+                user32.GetSystemMetrics(0),
+                user32.GetSystemMetrics(1),
+                0x00CC0020
+            )
+
+            buf = (ctypes.c_ubyte * (w * h * 4))()
+            gdi32.GetBitmapBits(bmp, len(buf), buf)
+
+            gdi32.DeleteObject(bmp)
+            gdi32.DeleteDC(memdc)
+
+            arr = np.frombuffer(buf, dtype=np.uint8).reshape((h, w, 4))
+            rgb = arr[:, :, :3].astype(np.float32) / 255.0
+            luma = rgb.mean(axis=2)
+
+            avg = float(luma.mean())
+            shadow = float((luma < 0.25).mean())
+
+            gx = np.abs(np.diff(luma, axis=1))
+            gy = np.abs(np.diff(luma, axis=0))
+            edge = float(np.mean(gx) + np.mean(gy))
+
+            with self.lock:
+                alpha = 0.2
+                self.avg_luma = self.avg_luma * (1 - alpha) + avg * alpha
+                self.shadow_density = self.shadow_density * (1 - alpha) + shadow * alpha
+                self.edge_strength = self.edge_strength * (1 - alpha) + edge * alpha
+
+        except Exception as e:
+            logging.debug(f"SceneAnalyzer error: {e}")
+
+scene_analyzer = SceneAnalyzer()
+
+def scene_worker():
+    while True:
+        scene_analyzer.update()
+        time.sleep(0.05)
+
+executor.submit(scene_worker)
+
 # === Gamma LUT Functions
 @lru_cache(maxsize=32)
 def base_curve(gamma, offset):
@@ -224,27 +337,111 @@ def base_curve(gamma, offset):
 def fast_array_signature(arr):
     return zlib.crc32(arr.tobytes())
 
+# === ADAPTIVE HELPERS (SCALAR-ONLY, FPS-SAFE) ===
+
+def get_scene_metrics():
+    with scene_analyzer.lock:
+        return (
+            scene_analyzer.avg_luma,
+            scene_analyzer.shadow_density,
+            scene_analyzer.edge_strength,
+        )
+
+def apply_histogram_adaptation(p):
+    p = dict(p)
+
+    if not config.get("HISTOGRAM_ADAPTIVE", False):
+        return p
+
+    avg, shadow_density, _ = get_scene_metrics()
+
+    lo = config["HISTOGRAM_MIN_LUMA"]
+    hi = config["HISTOGRAM_MAX_LUMA"]
+    strength = config["HISTOGRAM_STRENGTH"] * (
+        1.15 if p.get("PROFILE") == "INDOOR" else 0.85
+    )
+
+    if avg < lo:
+        t = np.clip((lo - avg) / lo, 0.0, 1.0) * strength
+        t *= (0.5 + shadow_density)
+
+        p["SHADOW_CUTOFF"] -= 0.05 * t
+        p["SHADOW_DESAT"] -= 0.20 * t
+        p["SHADOW_SIGMOID_BOOST"] += 0.30 * t
+
+    elif avg > hi:
+        t = np.clip((avg - hi) / (1.0 - hi), 0.0, 1.0) * strength
+        p["SHADOW_SIGMOID_BOOST"] *= (1.0 - 0.5 * t)
+        p["SHADOW_DESAT"] += 0.10 * t
+        
+    p["SHADOW_CUTOFF"] = np.clip(p["SHADOW_CUTOFF"], 0.15, 0.6)
+    p["SHADOW_DESAT"] = np.clip(p["SHADOW_DESAT"], 0.5, 1.0)
+    p["SHADOW_SIGMOID_BOOST"] = np.clip(p["SHADOW_SIGMOID_BOOST"], 0.0, 1.0)
+
+
+    return p
+
+def edge_shadow_scale():
+    if not config.get("EDGE_AWARE_SHADOWS", False):
+        return 1.0
+
+    _, _, edge = get_scene_metrics()
+    mn = config["EDGE_MIN"]
+    mx = config["EDGE_MAX"]
+    strength = config["EDGE_STRENGTH"]
+
+    t = np.clip((edge - mn) / max(mx - mn, 1e-4), 0.0, 1.0)
+    return 1.0 + t * strength
+
+
 def build_ramp_array(mode):
     m = mode.value.upper()
     p = {k.replace(f"_{m}", ""): config[k] for k in config if k.endswith(m)}
+    
+    # Tag active profile for adaptive logic
+    p["PROFILE"] = m
+    
+    # === Histogram-aware parameter adaptation (optional) ===
+    p = apply_histogram_adaptation(p)
+
     pop = np.clip(config.get("SHADOW_POP_STRENGTH", 0.0), 0.0, 1.0)
     if pop > 0.0:
-        p["GAMMA"] += 0.05 * pop
-        p["SHADOW_CUTOFF"] -= 0.03 * pop
-        p["SHADOW_DESAT"] -= 0.15 * pop
-        p["SHADOW_COLOR_BIAS"] += 0.015 * pop
+        p["GAMMA"] *= (1.0 + 0.04 * pop)
+        p["SHADOW_DESAT"] -= 0.10 * pop
+        p["SHADOW_COLOR_BIAS"] += 0.005 * pop
         p["MIDTONE_BOOST"] *= 1.0 + (0.03 * pop)
         p["RED_MULTIPLIER"] *= 1.0 + (0.01 * pop)
         p["BLUE_MULTIPLIER"] *= 1.0 - (0.005 * pop)
+        
+    p["SHADOW_CUTOFF"] = np.clip(p["SHADOW_CUTOFF"], 0.15, 0.6)
+    p["GAMMA"] = np.clip(p["GAMMA"], 0.75, 1.6)
+
 
     x = np.linspace(0, 1, 256)
     base = base_curve(p["GAMMA"], p["GAMMA_OFFSET"]).copy()
     bf = np.clip(p["BLACK_FLOOR"], 0.0, 0.10)
     base = bf + base * (1.0 - bf)
 
+    # === Edge-aware shadow scaling (optional) ===
+    edge_scale = edge_shadow_scale() if config.get("EDGE_AWARE_SHADOWS", False) else 1.0
+    
     cutoff = np.clip(p["SHADOW_CUTOFF"], 0.15, 0.6)
     shadow = x < cutoff
-    base[shadow] = np.power(base[shadow] / cutoff, p["SHADOW_LIFT_EXP"]) * cutoff
+    
+    # Reduce edge influence on shadow lift (keep it stronger on sigmoid)
+    lift_scale = 1.0 + 0.5 * (edge_scale - 1.0)
+
+    exp = np.clip(
+        p["SHADOW_LIFT_EXP"] * lift_scale,
+        0.4,
+        1.2
+    )
+
+
+    base[shadow] = np.power(
+        base[shadow] / cutoff,
+        exp
+    ) * cutoff
 
     # Sigmoid contrast shaping (mid-shadow)
     sig_strength = np.clip(p.get("SHADOW_SIGMOID_BOOST", 0.0), 0.0, 1.0)
@@ -252,7 +449,9 @@ def build_ramp_array(mode):
         mid = (x >= cutoff) & (x < 0.5)
         t = (x[mid] - cutoff) / (0.5 - cutoff)
         sigmoid = 1 / (1 + np.exp(-8 * (t - 0.5)))
-        base[mid] = base[mid] * (1 - sig_strength) + sigmoid * sig_strength
+        s = sig_strength * min(edge_scale, 1.3)
+        base[mid] = base[mid] * (1 - s) + sigmoid * s
+
 
     mid = (x >= cutoff) & (x < 0.7)
     base[mid] *= p["MIDTONE_BOOST"]
@@ -260,8 +459,20 @@ def build_ramp_array(mode):
     hi = base > 0.85
     base[hi] = 0.85 + (base[hi] - 0.85) * p["HIGHLIGHT_COMPRESS"]
 
+    # === HUD highlight preservation / exclusion ===
     if config.get("PRESERVE_HUD_HIGHLIGHTS", True):
-        base[base > 0.9] = np.clip(base[base > 0.9], 0.9, 1.0)
+        if config.get("HUD_EXCLUSION", False):
+            # adaptive HUD exclusion
+            hud_strength = config.get("HUD_EXCLUSION_STRENGTH", 0.6)
+            thr = np.clip(config.get("HUD_EXCLUSION_THRESHOLD", 0.9), 0.75, 0.98)
+            hi_mask = base > thr
+            base[hi_mask] = thr + (base[hi_mask] - thr) * hud_strength
+        else:
+            # legacy HUD-safe clamp
+            base[base > 0.9] = np.clip(base[base > 0.9], 0.9, 1.0)
+
+
+
 
     np.clip(base, 0.0, 1.0, out=base)
 
@@ -276,6 +487,48 @@ def build_ramp_array(mode):
     r[shadow] *= p["SHADOW_RED_BIAS"]
     g[shadow] *= p["SHADOW_GREEN_BIAS"]
     b[shadow] *= p["SHADOW_BLUE_BIAS"]
+    
+    # === Opponent-channel shadow tuning (optional) ===
+    if config.get("OPPONENT_TUNING", False):
+        opp = np.clip(config["OPPONENT_STRENGTH"], 0.0, 1.0)
+        
+        # --- Saturation risk clamp (prevents channel clipping)
+        # Estimate risk from vibrance and shadow color bias
+        sat_risk = max(
+            p["VIBRANCE"] - 1.0,
+            abs(p["SHADOW_COLOR_BIAS"]) * 4.0
+        )
+
+        if sat_risk > 0.0:
+            # Smoothly reduce opponent strength under high saturation
+            opp *= np.clip(1.0 - sat_risk, 0.25, 1.0)
+
+
+        # Luminance before adjustment
+        lum_before = (r + g + b) / 3.0
+
+        # Opponent channels
+        rg = r - g
+        by = b - (r + g) * 0.5
+
+        rg[shadow] *= (1.0 + opp)
+        by[shadow] *= (1.0 + opp)
+
+        r = g + rg
+        b = (r + g) * 0.5 + by
+
+        # Luminance after adjustment
+        lum_after = (r + g + b) / 3.0
+
+        # Preserve luminance ONLY in shadows
+        scale = np.ones_like(lum_before)
+        scale[shadow] = lum_before[shadow] / np.maximum(lum_after[shadow], 1e-4)
+
+        r *= scale
+        g *= scale
+        b *= scale
+
+
 
     desat = p["SHADOW_DESAT"]
     if desat < 1.0:
@@ -438,6 +691,102 @@ def rebuild_gui():
     tk.Checkbutton(scroll_frame, text="Preserve HUD Highlights",
                    variable=hud_var, command=toggle_hud,
                    bg=bg, fg=fg, selectcolor=bg).pack(anchor="w", padx=6, pady=(0, 10))
+                   
+    # === Adaptive / Scene-aware Features ===
+    ttk.Separator(scroll_frame).pack(fill="x", pady=10)
+
+    tk.Label(
+        scroll_frame,
+        text="Adaptive / Scene-Aware Enhancements",
+        bg=bg,
+        fg="#bbb",
+        font=("Segoe UI", 10, "bold")
+    ).pack(anchor="w", padx=6, pady=(4, 6))
+
+    # Histogram-aware shadows
+    hist_var = tk.BooleanVar(value=config["HISTOGRAM_ADAPTIVE"])
+    def toggle_hist():
+        config["HISTOGRAM_ADAPTIVE"] = hist_var.get()
+        config_mgr.debounce_save()
+        gamma_state.rebuild_debounced()
+
+    tk.Checkbutton(
+        scroll_frame,
+        text="Histogram-aware Shadow Shaping",
+        variable=hist_var,
+        command=toggle_hist,
+        bg=bg, fg=fg, selectcolor=bg
+    ).pack(anchor="w", padx=6)
+
+    if hist_var.get():
+        draw_slider(scroll_frame, "Histogram Strength",
+                    "HISTOGRAM_STRENGTH", 0.0, 1.0, 0.01)
+        draw_slider(scroll_frame, "Min Scene Luma",
+                    "HISTOGRAM_MIN_LUMA", 0.10, 0.50, 0.01)
+        draw_slider(scroll_frame, "Max Scene Luma",
+                    "HISTOGRAM_MAX_LUMA", 0.40, 0.90, 0.01)
+
+    # Edge-aware shadows
+    edge_var = tk.BooleanVar(value=config["EDGE_AWARE_SHADOWS"])
+    def toggle_edge():
+        config["EDGE_AWARE_SHADOWS"] = edge_var.get()
+        config_mgr.debounce_save()
+        gamma_state.rebuild_debounced()
+
+    tk.Checkbutton(
+        scroll_frame,
+        text="Edge-preserving Shadow Contrast",
+        variable=edge_var,
+        command=toggle_edge,
+        bg=bg, fg=fg, selectcolor=bg
+    ).pack(anchor="w", padx=6, pady=(6, 0))
+
+    if edge_var.get():
+        draw_slider(scroll_frame, "Edge Strength",
+                    "EDGE_STRENGTH", 0.0, 1.0, 0.01)
+        draw_slider(scroll_frame, "Edge Min",
+                    "EDGE_MIN", 0.0, 0.5, 0.01)
+        draw_slider(scroll_frame, "Edge Max",
+                    "EDGE_MAX", 0.3, 1.0, 0.01)
+
+    # Opponent channel tuning
+    opp_var = tk.BooleanVar(value=config["OPPONENT_TUNING"])
+    def toggle_opp():
+        config["OPPONENT_TUNING"] = opp_var.get()
+        config_mgr.debounce_save()
+        gamma_state.rebuild_debounced()
+
+    tk.Checkbutton(
+        scroll_frame,
+        text="Opponent-channel Shadow Tuning",
+        variable=opp_var,
+        command=toggle_opp,
+        bg=bg, fg=fg, selectcolor=bg
+    ).pack(anchor="w", padx=6, pady=(6, 0))
+
+    if opp_var.get():
+        draw_slider(scroll_frame, "Opponent Strength",
+                    "OPPONENT_STRENGTH", 0.0, 1.0, 0.01)
+
+    # HUD exclusion
+    hud_ex_var = tk.BooleanVar(value=config["HUD_EXCLUSION"])
+    def toggle_hud_ex():
+        config["HUD_EXCLUSION"] = hud_ex_var.get()
+        config_mgr.debounce_save()
+        gamma_state.rebuild_debounced()
+
+    tk.Checkbutton(
+        scroll_frame,
+        text="HUD-aware Highlight Exclusion",
+        variable=hud_ex_var,
+        command=toggle_hud_ex,
+        bg=bg, fg=fg, selectcolor=bg
+    ).pack(anchor="w", padx=6, pady=(6, 0))
+
+    if hud_ex_var.get():
+        draw_slider(scroll_frame, "HUD Exclusion Strength",
+                    "HUD_EXCLUSION_STRENGTH", 0.0, 1.0, 0.01)
+
 
     m = gamma_state.current_mode.value.upper()
 
