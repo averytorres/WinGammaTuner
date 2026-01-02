@@ -58,12 +58,14 @@ toggled instantly to adapt to different lighting conditions and use cases.
 
 ```bash
 pip install numpy pynput orjson
+```
 ## 🚀 Usage
 
 ### ▶️ Run the script
 
 ```bash
 python gamma_control.py
+```
 ### 🔑 Global hotkeys
 
 F6  → Open or show settings GUI  
