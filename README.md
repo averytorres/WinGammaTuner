@@ -1,76 +1,46 @@
-\# WinGammaTuner
+# WinGammaTuner
 
+**WinGammaTuner** is a Windows utility for real-time display gamma correction and color tuning. Designed for users who want precise control over indoor and outdoor display profiles, it offers hotkey switching, live GUI adjustment, and persistent configuration.
 
+## 🔧 Features
 
-\*\*WinGammaTuner\*\* is a Windows utility for real-time display gamma correction and color tuning. Designed for users who want precise control over indoor and outdoor display profiles, it offers hotkey switching, live GUI adjustment, and persistent configuration.
+- Real-time gamma and color ramp control via Windows GDI
+- INDOOR and OUTDOOR preset modes
+- Hotkey toggle: F6 (GUI), F8 (Indoor), F9 (Outdoor)
+- Tkinter-based GUI with fine-tuning sliders
+- Persistent JSON config with debounce saving
+- Efficient LUT generation with ramp caching and CRC validation
 
+## 🖥 Requirements
 
+- Windows OS
+- Python 3.9+
+- Compatible display hardware (SetDeviceGammaRamp support)
+- Python dependencies:
+  ```bash
+  pip install numpy pynput orjson
+  
+## 🚀 Usage
 
-\## 🔧 Features
+1. Run `gamma_control.py`
 
-\- Real-time gamma and color ramp control via Windows GDI
+2. Use hotkeys:
+   - `F6`: Open/close settings GUI  
+   - `F8`: Toggle INDOOR mode  
+   - `F9`: Toggle OUTDOOR mode
 
-\- INDOOR and OUTDOOR preset modes
+3. Adjust values via GUI as needed — changes apply instantly and are auto-saved
 
-\- Hotkey toggle: F6 (GUI), F8 (Indoor), F9 (Outdoor)
+## ⚠️ Notes
 
-\- Tkinter-based GUI with fine-tuning sliders
+- Not recommended for use via Remote Desktop  
+- Avoid extreme gamma values — may destabilize display drivers
 
-\- Persistent JSON config with debounce saving
+## 📁 Files
 
-\- Efficient LUT generation with ramp caching and CRC validation
+- `gamma_control.py`: Main script  
+- `gamma_config.json`: Auto-generated config (saved in script directory)
 
-
-
-\## 🖥 Requirements
-
-\- Windows OS
-
-\- Python 3.9+
-
-\- Compatible display hardware (SetDeviceGammaRamp support)
-
-\- Python dependencies:
-
-&nbsp;- pip install numpy pynput orjson
-
-
-
-\## 🚀 Usage
-
-1\. Run `gamma\_control.py`
-
-2\. Use hotkeys:
-
-&nbsp;- `F6`: Open/close settings GUI
-
-&nbsp;- `F8`: Toggle INDOOR mode
-
-&nbsp;- `F9`: Toggle OUTDOOR mode
-
-3\. Adjust values via GUI as needed — changes apply instantly and are auto-saved
-
-
-
-\## ⚠️ Notes
-
-\- Not recommended for use via Remote Desktop
-
-\- Avoid extreme gamma values — may destabilize display drivers
-
-
-
-\## 📁 Files
-
-\- `gamma\_control.py`: Main script
-
-\- `gamma\_config.json`: Auto-generated config (saved in script directory)
-
-
-
-\## 📄 License
+## 📄 License
 
 MIT
-
-
-
