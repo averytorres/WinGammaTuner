@@ -12,80 +12,59 @@ toggled instantly to adapt to different lighting conditions.
 
 ---
 
-## 🔧 Features
+## Features
 
 - Real-time display gamma ramp control via Windows GDI (`SetDeviceGammaRamp`)
-- Parametric 256-step LUT generation including:
+- Live generation and application of 256-step gamma lookup tables
+- Parametric LUT shaping including:
   - Gamma exponent with optional offset
   - Black floor lift for shadow detail preservation
   - Nonlinear shadow-region lift with configurable cutoff
-  - Shadow-only perceptual contrast shaping (power-based)
+  - Shadow-only perceptual contrast shaping
   - Optional mid-shadow sigmoid contrast shaping for silhouette separation
-  - Optional midtone shaping (advanced)
-  - Highlight compression with near-white (UI / HUD) preservation
-  - Configurable HUD / highlight clamp
+  - Optional midtone shaping
+  - Highlight compression with near-white UI / HUD preservation
+  - Configurable highlight clamp for HUD stability
   - Global vibrance scaling
   - Global RGB channel multipliers
-  - Shadow-only color bias for silhouette clarity (FPS-safe)
+  - Shadow-only color bias for silhouette clarity
   - Optional opponent-channel shadow tuning with luminance preservation
   - Global Shadow Pop Strength modifier
-- Optional scene-aware enhancements (disabled by default):
+- Optional scene-aware enhancements:
   - Histogram-aware shadow adaptation
   - Edge-aware shadow contrast scaling
+  - Motion-aware shadow enhancement
   - HUD-aware highlight exclusion
-- Two independent profiles:
+- Two independent tuning profiles:
   - **INDOOR** — controlled or low-light environments
   - **OUTDOOR** — bright or high-glare environments
 - Instant profile switching via global hotkeys
 - Lightweight Tkinter GUI with live updates
-- Modifier-aware sliders for precision tuning:
+- Modifier-aware sliders for precision control:
   - Normal drag: full-range adjustment
-  - Shift + drag: medium-granularity
+  - Shift + drag: medium granularity
   - Ctrl + drag: fine-grained adjustment
 - Persistent JSON configuration with debounced auto-save
 - Cached curve generation with CRC-based gamma ramp validation
 - Threaded execution to avoid blocking UI or hotkey handling
-- Automatic restoration of the identity gamma ramp when no profile is active
+- Automatic restoration of the identity gamma ramp when no profile is active or on exit
 
 ---
 
-## 🖥 Requirements
+## Requirements
 
 - Windows OS
 - Python 3.9+
 - Display driver supporting `SetDeviceGammaRamp`
 
-```bash
-pip install numpy pynput orjson
-```
+Dependencies:
+- numpy
+- pynput
+- orjson
+
 ---
+
 ## Usage
 
-```bash
-python gamma_control.py
-```
----
-## Global hotkeys
+Run the application from the project directory:
 
-- F6 → Open or show settings GUI
-- F8 → Toggle INDOOR profile
-- F9 → Toggle OUTDOOR profile
-
-Only one profile may be active at a time. Disabling all profiles restores the
-identity gamma ramp.
-
-## Notes
-
-- Gamma ramps affect global display output at the driver level
-- Extreme values may cause banding, clipping, or eye strain
-- Advanced controls can significantly alter visual output
-- Not recommended for Remote Desktop or unsupported GPUs
-
-## Files
-
-- gamma_control.py — main application
-- gamma_config.json — auto-generated persistent configuration
-
-## License
-
-MIT
