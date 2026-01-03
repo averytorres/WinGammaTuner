@@ -218,6 +218,13 @@ default_config.update({
 
     "MOTION_SENSITIVITY": 2.3,           # Slightly less trigger-happy
     "MOTION_SMOOTHING": 0.15,            # Already well tuned; leave as-is
+    
+    # ================= Motion Shadow Emphasis (Cone-like perceptual boost) =================
+    "MOTION_SHADOW_EMPHASIS": True,        # Master enable (profile-gated)
+    "MOTION_SHADOW_STRENGTH": 0.65,        # Overall intensity (0.0–1.0 safe)
+    "MOTION_SHADOW_DARK_LUMA": 0.50,       # Only activate in dark scenes
+    "MOTION_SHADOW_MIN_MOTION": 0.015,     # Ignore camera micro-jitter
+
 })
 
 
@@ -286,7 +293,8 @@ def adaptive_enabled():
         config.get("EDGE_AWARE_SHADOWS", False) or
         config.get("OPPONENT_TUNING", False) or
         config.get("HUD_EXCLUSION", False) or
-        config.get("MOTION_AWARE_SHADOWS", False)
+        config.get("MOTION_AWARE_SHADOWS", False) or
+        config.get("MOTION_SHADOW_EMPHASIS", False)
     )
 
 class SceneAnalyzer:
@@ -444,6 +452,42 @@ def get_scene_metrics():
             scene_analyzer.edge_strength,
             scene_analyzer.motion_strength,
         )
+        
+def motion_shadow_emphasis_scale():
+    if not (
+        config.get("MOTION_AWARE_SHADOWS", False) and
+        config.get("MOTION_SHADOW_EMPHASIS", False)
+    ):
+        return 0.0
+
+    avg, shadow_density, _, motion = get_scene_metrics()
+
+    # Motion threshold gate
+    if motion < config.get("MOTION_SHADOW_MIN_MOTION", 0.01):
+        return 0.0
+
+    # Normalize motion into [0–1]
+    t = np.clip(motion * config.get("MOTION_SENSITIVITY", 2.5), 0.0, 1.0)
+
+    # Shadow presence weighting (prevents snow / fog triggers)
+    t *= np.clip(0.5 + shadow_density, 0.5, 1.0)
+    
+    dark_gate = np.clip(
+        config.get("MOTION_SHADOW_DARK_LUMA", 0.5),
+        0.35,
+        0.60
+    )
+
+    if avg > dark_gate:
+        return 0.0
+        
+    strength = np.clip(
+        config.get("MOTION_SHADOW_STRENGTH", 0.6),
+        0.0,
+        0.85
+    )
+
+    return t * strength
 
 def apply_histogram_adaptation(p):
     p = dict(p)
@@ -520,7 +564,8 @@ def build_ramp_array(mode):
     p["PROFILE"] = m
 
     adaptive = adaptive_enabled()
-    
+    motion_emphasis = motion_shadow_emphasis_scale() if adaptive else 0.0
+
     # === Histogram-aware parameter adaptation (optional) ===
     if adaptive:
         p = apply_histogram_adaptation(p)
@@ -546,12 +591,17 @@ def build_ramp_array(mode):
 
     # === Edge-aware shadow scaling (optional) ===
     edge_scale = edge_shadow_scale() if adaptive else 1.0
-    
+
+    # Base shadow cutoff
     cutoff = np.clip(p["SHADOW_CUTOFF"], 0.15, 0.6)
+
+    # Motion-based temporary expansion (perceptual "cone")
+    cutoff += 0.04 * motion_emphasis
+    cutoff = np.clip(cutoff, 0.15, 0.6)
+
     transition = 0.08  # smoke-safe zone
     shadow = x < cutoff
     soft_shadow = (x >= cutoff) & (x < cutoff + transition)
-
     
     # Reduce edge influence on shadow lift (keep it stronger on sigmoid)
     lift_scale = 1.0 + 0.5 * (edge_scale - 1.0)
@@ -593,6 +643,10 @@ def build_ramp_array(mode):
     toe = x < toe_end
     t = (toe_end - x[toe]) / toe_end
     base[toe] += toe_strength * (t * t)
+    
+    if adaptive:
+        if motion_emphasis > 0.0:
+            base[toe] += (0.025 * motion_emphasis)
 
     # Sigmoid contrast shaping (mid-shadow)
     sig_strength = np.clip(p.get("SHADOW_SIGMOID_BOOST", 0.0), 0.0, 1.0)
@@ -616,8 +670,12 @@ def build_ramp_array(mode):
             if motion_t > 0.0:
                 base += (base - np.mean(base)) * motion_t * 0.04
 
+            if motion_emphasis > 0.0:
+                # Stronger silhouette separation
+                sig_strength *= (1.0 + 1.2 * motion_emphasis)
 
-            
+                
+
     sig_strength = np.clip(sig_strength, 0.0, 1.25)
 
     if sig_strength > 0.0:
@@ -656,6 +714,16 @@ def build_ramp_array(mode):
     base[mask] = shoulder_start + (base[mask] - shoulder_start) * (1.0 - 0.6 * t)
     hi = HI_085_MASK
     base[hi] = 0.85 + (base[hi] - 0.85) * p["HIGHLIGHT_COMPRESS"]
+    
+    if adaptive:
+        avg, shadow_density, _, _ = get_scene_metrics()
+        if avg > 0.6:
+            # --- Highlight micro-contrast restoration (snow / white walls safe) ---
+            hi_detail = (x > 0.82) & (x < 0.97)
+
+            # Mean-centered expansion preserves brightness while restoring texture
+            m = np.mean(base[hi_detail])
+            base[hi_detail] += (base[hi_detail] - m) * 0.035  # SAFE RANGE: 0.02–0.05
     
     # --- Minimum highlight contrast floor ---
     dx = np.gradient(base)
@@ -751,6 +819,11 @@ def build_ramp_array(mode):
         b[shadow] = np.clip(b[shadow], 0.0, 1.0)
 
     desat = p["SHADOW_DESAT"]
+
+    if adaptive:
+        if motion_emphasis > 0.0:
+            desat *= (1.0 - 0.35 * motion_emphasis)
+
     if desat < 1.0:
         lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
         r[shadow] = lum[shadow] + (r[shadow] - lum[shadow]) * desat
@@ -978,7 +1051,7 @@ def rebuild_gui():
                     "EDGE_MAX", 0.3, 1.0, 0.01)
                     
     # Motion-aware shadows
-    motion_var = tk.BooleanVar(value=config["MOTION_AWARE_SHADOWS"])
+    motion_var = tk.BooleanVar(value=config["MOTION_AWARE_SHADOWS"]) 
 
     def toggle_motion():
         config["MOTION_AWARE_SHADOWS"] = motion_var.get()
@@ -992,6 +1065,51 @@ def rebuild_gui():
         command=toggle_motion,
         bg=bg, fg=fg, selectcolor=bg
     ).pack(anchor="w", padx=6, pady=(6, 0))
+    
+    # === Motion Shadow Emphasis (Cone-like perceptual boost) ===
+    ttk.Separator(scroll_frame).pack(fill="x", pady=10)
+
+    tk.Label(
+        scroll_frame,
+        text="Motion Shadow Emphasis",
+        bg=bg,
+        fg="#bbb",
+        font=("Segoe UI", 10, "bold")
+    ).pack(anchor="w", padx=6, pady=(4, 6))
+
+    motion_emph_var = tk.BooleanVar(value=config["MOTION_SHADOW_EMPHASIS"])
+
+    def toggle_motion_emph():
+        config["MOTION_SHADOW_EMPHASIS"] = motion_emph_var.get()
+        config_mgr.debounce_save()
+        gamma_state.rebuild_debounced()
+
+    tk.Checkbutton(
+        scroll_frame,
+        text="Enable Motion-based Shadow Emphasis",
+        variable=motion_emph_var,
+        command=toggle_motion_emph,
+        bg=bg, fg=fg, selectcolor=bg
+    ).pack(anchor="w", padx=6)
+
+    if motion_emph_var.get():
+        draw_slider(
+            scroll_frame,
+            "Emphasis Strength",
+            "MOTION_SHADOW_STRENGTH",
+            0.0,
+            0.85,      # HARD SAFE MAX (do not exceed)
+            0.01
+        )
+
+        draw_slider(
+            scroll_frame,
+            "Max Scene Luma",
+            "MOTION_SHADOW_DARK_LUMA",
+            0.35,      # Prevents outdoor abuse
+            0.60,      # Above this looks wrong
+            0.01
+        )
 
     if motion_var.get():
         m = gamma_state.current_mode.value.upper()
