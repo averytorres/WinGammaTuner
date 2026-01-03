@@ -1,0 +1,21 @@
+# Ignore everything by default
+*
+
+# ===============================
+# Allowlist: project source files
+# ===============================
+!main.py
+!gamma_pipeline.py
+!gamma_controller.py
+!gamma_ui.py
+!scene_analyzer.py
+!README.md
+!.gitignore
+
+# ===============================
+# Explicit ignores (clarity)
+# ===============================
+gamma_config.json
+visual_boost.py_prettygood
+lut_cache/
+__pycache__/
