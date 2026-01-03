@@ -127,82 +127,97 @@ CONFIG_FILE = os.path.join(BASE_DIR, "gamma_config.json")
 
 default_config = {
     "ADVANCED_MODE": False,
-    "SHADOW_POP_STRENGTH": 0.0,
-    "PRESERVE_HUD_HIGHLIGHTS": True,
+    "SHADOW_POP_STRENGTH": 0.20,          # Gentle global boost for silhouette clarity without washout
+    "PRESERVE_HUD_HIGHLIGHTS": True,      # Required due to bright interiors / snow / UI overlap
 
-    # Indoor profile
-    "GAMMA_INDOOR": 1.30,
+    # ================= INDOOR PROFILE (Primary for this map) =================
+
+    "GAMMA_INDOOR": 1.28,                 # Slightly lower than before to avoid global flattening
     "GAMMA_OFFSET_INDOOR": 0.0,
-    "VIBRANCE_INDOOR": 1.05,
-    "BLACK_FLOOR_INDOOR": 0.035,
-    "SHADOW_LIFT_EXP_INDOOR": 0.65,
-    "SHADOW_CUTOFF_INDOOR": 0.40,
-    "SHADOW_DESAT_INDOOR": 0.85,
+
+    "VIBRANCE_INDOOR": 1.04,              # Small reduction to prevent color noise in shadows
+    "BLACK_FLOOR_INDOOR": 0.030,           # Opens near-black detail without lifting true blacks
+
+    "SHADOW_LIFT_EXP_INDOOR": 0.62,        # Stronger shadow opening, tuned for interior corners
+    "SHADOW_CUTOFF_INDOOR": 0.42,          # Targets doorways, stairwells, pits where enemies hide
+
+    "SHADOW_DESAT_INDOOR": 0.82,           # Helps warm player models stand out from cold interiors
     "SHADOW_COLOR_BIAS_INDOOR": 0.0,
+
     "SHADOW_RED_BIAS_INDOOR": 1.00,
     "SHADOW_GREEN_BIAS_INDOOR": 1.00,
     "SHADOW_BLUE_BIAS_INDOOR": 1.00,
-    "MIDTONE_BOOST_INDOOR": 1.00,
-    "HIGHLIGHT_COMPRESS_INDOOR": 0.30,
+
+    "MIDTONE_BOOST_INDOOR": 1.02,          # Very light lift to avoid crushing mid-detail
+    "HIGHLIGHT_COMPRESS_INDOOR": 0.32,     # Preserves bright lights and HUD readability
+
     "RED_MULTIPLIER_INDOOR": 1.00,
     "GREEN_MULTIPLIER_INDOOR": 1.00,
     "BLUE_MULTIPLIER_INDOOR": 1.00,
-    "SHADOW_SIGMOID_BOOST_INDOOR": 0.0,
 
-    # Outdoor profile
-    "GAMMA_OUTDOOR": 1.12,
+    "SHADOW_SIGMOID_BOOST_INDOOR": 0.35,   # Main silhouette separation tool for this map
+
+    # ================= OUTDOOR PROFILE (Snow / bright transitions) =================
+
+    "GAMMA_OUTDOOR": 1.12,                 # Correct as-is for bright environments
     "GAMMA_OFFSET_OUTDOOR": 0.0,
-    "VIBRANCE_OUTDOOR": 1.04,
-    "BLACK_FLOOR_OUTDOOR": 0.025,
-    "SHADOW_LIFT_EXP_OUTDOOR": 0.75,
-    "SHADOW_CUTOFF_OUTDOOR": 0.35,
-    "SHADOW_DESAT_OUTDOOR": 0.90,
+
+    "VIBRANCE_OUTDOOR": 1.03,              # Keeps snow from oversaturating UI elements
+    "BLACK_FLOOR_OUTDOOR": 0.022,           # Slightly lower to preserve outdoor contrast
+
+    "SHADOW_LIFT_EXP_OUTDOOR": 0.75,        # Less aggressive; outdoor shadows are already readable
+    "SHADOW_CUTOFF_OUTDOOR": 0.34,          # Keeps lift out of bright ground planes
+
+    "SHADOW_DESAT_OUTDOOR": 0.90,           # Minimal desat to retain environmental cues
     "SHADOW_COLOR_BIAS_OUTDOOR": 0.0,
+
     "SHADOW_RED_BIAS_OUTDOOR": 1.00,
     "SHADOW_GREEN_BIAS_OUTDOOR": 1.00,
     "SHADOW_BLUE_BIAS_OUTDOOR": 1.00,
-    "MIDTONE_BOOST_OUTDOOR": 1.00,
-    "HIGHLIGHT_COMPRESS_OUTDOOR": 0.50,
+
+    "MIDTONE_BOOST_OUTDOOR": 1.00,          # Leave neutral to avoid snow glare
+    "HIGHLIGHT_COMPRESS_OUTDOOR": 0.48,     # Prevents snow and lights from clipping
+
     "RED_MULTIPLIER_OUTDOOR": 1.00,
     "GREEN_MULTIPLIER_OUTDOOR": 1.00,
     "BLUE_MULTIPLIER_OUTDOOR": 1.00,
-    "SHADOW_SIGMOID_BOOST_OUTDOOR": 0.0,
+
+    "SHADOW_SIGMOID_BOOST_OUTDOOR": 0.18,   # Mild separation without overprocessing
 }
 
 # === Adaptive Analysis Features (NEW, SAFE DEFAULTS OFF) ===
 
 default_config.update({
-    # Histogram-aware shadow shaping
-    "HISTOGRAM_ADAPTIVE": False,
-    "HISTOGRAM_STRENGTH": 0.35,
-    "HISTOGRAM_MIN_LUMA": 0.10,
-    "HISTOGRAM_MAX_LUMA": 0.55,
+    # ================= Histogram-aware shadow shaping =================
+    "HISTOGRAM_ADAPTIVE": True,          # Map has frequent bright↔dark interior transitions
+    "HISTOGRAM_STRENGTH": 0.30,          # Reduced to avoid fighting tuned static shadows
+    "HISTOGRAM_MIN_LUMA": 0.12,          # Matches darker interior baseline
+    "HISTOGRAM_MAX_LUMA": 0.55,          # Prevents overreaction to bright rooms
 
-    # Edge-preserving shadow contrast
-    "EDGE_AWARE_SHADOWS": False,
+    # ================= Edge-preserving shadow contrast =================
+    "EDGE_AWARE_SHADOWS": False,         # Strong geometry already present; avoid clutter boost
     "EDGE_STRENGTH": 0.40,
     "EDGE_MIN": 0.05,
     "EDGE_MAX": 0.35,
 
-    # Color opponent channel tuning
-    "OPPONENT_TUNING": False,
+    # ================= Color opponent channel tuning =================
+    "OPPONENT_TUNING": False,            # Leave opt-in; useful but stylistic
     "OPPONENT_STRENGTH": 0.25,
 
-    # HUD-aware exclusion (gamma-safe approximation)
-    "HUD_EXCLUSION": False,
+    # ================= HUD-aware exclusion =================
+    "HUD_EXCLUSION": False,              # Highlight clamp already sufficient for this map
     "HUD_EXCLUSION_STRENGTH": 0.60,
     "HUD_EXCLUSION_THRESHOLD": 0.90,
     
-    # Motion-aware adaptive shadows
-    "MOTION_AWARE_SHADOWS": False,
+    # ================= Motion-aware adaptive shadows =================
+    "MOTION_AWARE_SHADOWS": True,        # Visibility failures occur during peeks/movement
 
     # Profile-aware motion boost
-    "MOTION_STRENGTH_INDOOR": 0.75,
-    "MOTION_STRENGTH_OUTDOOR": 0.45,
+    "MOTION_STRENGTH_INDOOR": 0.55,      # Reduced for stability in tight interiors
+    "MOTION_STRENGTH_OUTDOOR": 0.35,     # Subtle assist without snow washout
 
-    "MOTION_SENSITIVITY": 2.5,
-    "MOTION_SMOOTHING": 0.15,
-
+    "MOTION_SENSITIVITY": 2.3,           # Slightly less trigger-happy
+    "MOTION_SMOOTHING": 0.15,            # Already well tuned; leave as-is
 })
 
 
@@ -260,6 +275,8 @@ X_AXIS = np.linspace(0, 1, 256)
 MID_05_MASK = X_AXIS < 0.5
 MID_07_MASK = X_AXIS < 0.7
 HI_085_MASK = X_AXIS > 0.85
+_DITHER_NOISE = (np.random.rand(256) - 0.5) * (1.0 / 65535.0)
+
 
 # === LOW-RES DESKTOP SAMPLING (FPS-SAFE) ===
 
@@ -531,7 +548,10 @@ def build_ramp_array(mode):
     edge_scale = edge_shadow_scale() if adaptive else 1.0
     
     cutoff = np.clip(p["SHADOW_CUTOFF"], 0.15, 0.6)
+    transition = 0.08  # smoke-safe zone
     shadow = x < cutoff
+    soft_shadow = (x >= cutoff) & (x < cutoff + transition)
+
     
     # Reduce edge influence on shadow lift (keep it stronger on sigmoid)
     lift_scale = 1.0 + 0.5 * (edge_scale - 1.0)
@@ -542,11 +562,37 @@ def build_ramp_array(mode):
         1.2
     )
 
+    # --- Luminance-preserving shadow lift ---
+    lum = base.copy()
 
-    base[shadow] = np.power(
-        base[shadow] / cutoff,
-        exp
-    ) * cutoff
+    # Protect against divide-by-zero
+    chrom = np.divide(base, lum + 1e-5)
+
+    # Hard shadows (true dark regions)
+    lum[shadow] = np.power(lum[shadow] / cutoff, exp) * cutoff
+
+    # Soft shadows (smoke-safe transition zone)
+    t = (x[soft_shadow] - cutoff) / transition
+    lifted = np.power(lum[soft_shadow] / cutoff, exp) * cutoff
+    lum[soft_shadow] = lum[soft_shadow] * (1.0 - t) + lifted * t
+
+    # Recombine luminance + chroma
+    base = lum * chrom
+    
+    # --- Minimum shadow contrast floor ---
+    min_contrast = 0.015  # subtle, safe
+    dx = np.gradient(base)
+    dx[shadow] = np.maximum(dx[shadow], min_contrast)
+    base = np.cumsum(dx)
+    base = np.clip(base / base[-1], 0.0, 1.0)
+    
+    # --- Deep shadow toe lift (brightens dark-dark only) ---
+    toe_end = 0.08      # how far up the lift reaches (0.06–0.10 safe)
+    toe_strength = 0.04 # lift amount (0.02–0.06 safe)
+
+    toe = x < toe_end
+    t = (toe_end - x[toe]) / toe_end
+    base[toe] += toe_strength * (t * t)
 
     # Sigmoid contrast shaping (mid-shadow)
     sig_strength = np.clip(p.get("SHADOW_SIGMOID_BOOST", 0.0), 0.0, 1.0)
@@ -565,23 +611,69 @@ def build_ramp_array(mode):
 
             motion_t = np.clip(motion * sensitivity, 0.0, 1.0)
             sig_strength *= (1.0 + motion_t * strength)
+            
+            # --- Motion-only local contrast (no lift, smoke-safe) ---
+            if motion_t > 0.0:
+                base += (base - np.mean(base)) * motion_t * 0.04
+
 
             
     sig_strength = np.clip(sig_strength, 0.0, 1.25)
 
     if sig_strength > 0.0:
-        mid = MID_05_MASK & ~shadow
+        mid = MID_05_MASK & ~shadow & ~soft_shadow
         t = (x[mid] - cutoff) / (0.5 - cutoff)
         sigmoid = 1 / (1 + np.exp(-8 * (t - 0.5)))
         s = sig_strength * min(edge_scale, 1.3)
         base[mid] = base[mid] * (1 - s) + sigmoid * s
 
+    # --- Shadow ceiling compression ---
+    ceiling = cutoff + 0.15
+    mask = (x > cutoff) & (x < ceiling)
+    t = (x[mask] - cutoff) / (ceiling - cutoff)
+    base[mask] *= 1.0 - 0.12 * (1.0 - t)
 
-    mid = MID_07_MASK & ~shadow
+    mid = MID_07_MASK & ~shadow & ~soft_shadow
     base[mid] *= p["MIDTONE_BOOST"]
+    
+    # --- Subtle midtone micro-contrast (restores depth, no smoke impact) ---
+    mc_strength = 0.025  # keep small (0.02–0.04 max)
+    mid = (x > 0.35) & (x < 0.75)
+    m = np.mean(base[mid])
+    base[mid] += (base[mid] - m) * mc_strength
+    base[mid] *= 1.015
 
+    # --- Highlight shoulder roll-off (prevents whiteout) ---
+    shoulder_start = 0.75
+    shoulder_end = 0.95
+
+    mask = (x > shoulder_start) & (x < shoulder_end)
+    t = (x[mask] - shoulder_start) / (shoulder_end - shoulder_start)
+    
+    # Smooth cubic easing (no banding)
+    t = t * t * (3 - 2 * t)
+
+    base[mask] = shoulder_start + (base[mask] - shoulder_start) * (1.0 - 0.6 * t)
     hi = HI_085_MASK
     base[hi] = 0.85 + (base[hi] - 0.85) * p["HIGHLIGHT_COMPRESS"]
+    
+    # --- Minimum highlight contrast floor ---
+    dx = np.gradient(base)
+    hi = x > 0.85
+    dx[hi] = np.maximum(dx[hi], 0.01)
+    base = np.cumsum(dx)
+    base = np.clip(base / base[-1], 0.0, 1.0)
+    
+    # --- Perceptual highlight glare reduction (snow / fog safe) ---
+    if adaptive:
+        avg, shadow_density, _, _ = get_scene_metrics()
+
+        # Trigger only in very bright scenes with low shadow presence
+        if avg > 0.65 and shadow_density < 0.35:
+            t = np.clip((avg - 0.65) / 0.25, 0.0, 1.0)
+
+            hi = x > 0.82
+            base[hi] *= (1.0 - 0.12 * t)
 
     # === HUD highlight preservation / exclusion ===
     if config.get("PRESERVE_HUD_HIGHLIGHTS", True):
@@ -664,6 +756,14 @@ def build_ramp_array(mode):
         r[shadow] = lum[shadow] + (r[shadow] - lum[shadow]) * desat
         g[shadow] = lum[shadow] + (g[shadow] - lum[shadow]) * desat
         b[shadow] = lum[shadow] + (b[shadow] - lum[shadow]) * desat
+
+    # --- Luminance-weighted dithering (kills oil-slick highlights) ---
+    dither = _DITHER_NOISE * (0.5 + 0.5 * base)
+
+    r = np.clip(r + dither, 0.0, 1.0)
+    g = np.clip(g + dither, 0.0, 1.0)
+    b = np.clip(b + dither, 0.0, 1.0)
+
 
     scale = 65535 * p["VIBRANCE"]
     return np.concatenate((
