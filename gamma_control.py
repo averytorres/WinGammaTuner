@@ -642,7 +642,7 @@ def build_ramp_array(mode):
 
     toe = x < toe_end
     t = (toe_end - x[toe]) / toe_end
-    base[toe] += toe_strength * (t * t)
+    base[toe] += toe_strength * (t * t) * dx[toe]
     
     if adaptive:
         if motion_emphasis > 0.0:
@@ -669,7 +669,11 @@ def build_ramp_array(mode):
             # --- Motion-only local contrast (no lift, smoke-safe) ---
             if motion_t > 0.0:
                 base += (base - np.mean(base)) * motion_t * 0.04
-
+                dx = np.gradient(base)
+                dx = np.maximum(dx, 0.012)
+                base = np.cumsum(dx)
+                base /= base[-1]
+                
             if motion_emphasis > 0.0:
                 # Stronger silhouette separation
                 sig_strength *= (1.0 + 1.2 * motion_emphasis)
