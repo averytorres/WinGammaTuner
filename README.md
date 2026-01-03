@@ -67,4 +67,57 @@ Dependencies:
 ## Usage
 
 Run the application from the project directory:
+```
+python main.py
+```
+
+---
+
+## Global Hotkeys
+
+- **F6** — Open or show settings GUI
+- **F8** — Toggle INDOOR profile
+- **F9** — Toggle OUTDOOR profile
+
+Only one profile may be active at a time. Disabling all profiles restores the
+identity gamma ramp.
+
+---
+
+## Project Structure
+
+- **main.py**  
+  Application entry point. Wires together the pipeline, controller, scene analyzer,
+  UI, and hotkeys.
+
+- **gamma_pipeline.py**  
+  Gamma LUT construction and all color and contrast shaping logic.
+
+- **scene_analyzer.py**  
+  Low-resolution desktop sampling and scene analysis for adaptive features.
+
+- **gamma_controller.py**  
+  Win32 gamma ramp application, CRC validation, and profile switching.
+
+- **gamma_ui.py**  
+  Tkinter-based graphical interface, sliders, collapsible sections, and live updates.
+
+- **gamma_config.json**  
+  Auto-generated persistent configuration. This file represents runtime state and
+  should not be version-controlled.
+
+---
+
+## Notes and Warnings
+
+- Gamma ramps affect global display output at the driver level
+- Extreme values may cause banding, clipping, or eye strain
+- Advanced controls can significantly alter visual output
+- Not recommended for Remote Desktop sessions or unsupported GPUs
+
+---
+
+## License
+
+MIT
 
