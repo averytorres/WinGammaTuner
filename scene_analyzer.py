@@ -1,6 +1,4 @@
 """
-scene_analyzer.py
-
 Low-res desktop sampling + scene metrics for adaptive gamma features.
 Separated from the LUT math and from Tk UI.
 
@@ -29,27 +27,37 @@ class SceneAnalyzer:
         self.config = config
         self.is_active = is_active
 
+        # Public metrics (smoothed)
         self.avg_luma = 0.5
         self.shadow_density = 0.0
         self.edge_strength = 0.0
         self.motion_strength = 0.0
 
-        self._prev_luma = None
+        # Internal state
+        self._prev_luma: np.ndarray | None = None
         self._lock = Lock()
         self._last_update = 0.0
-
         self._stop_evt = Event()
+
+    # ───────────────────────── Lifecycle ─────────────────────────
+
+    def start(self, executor) -> None:
+        """Start background sampling loop (safe to call once)."""
+        executor.submit(self._worker_loop)
 
     def stop(self) -> None:
         self._stop_evt.set()
 
     def get_metrics(self) -> Tuple[float, float, float, float]:
         with self._lock:
-            return (self.avg_luma, self.shadow_density, self.edge_strength, self.motion_strength)
+            return (
+                self.avg_luma,
+                self.shadow_density,
+                self.edge_strength,
+                self.motion_strength,
+            )
 
-    def start(self, executor) -> None:
-        """Start background sampling loop (safe to call once)."""
-        executor.submit(self._worker_loop)
+    # ───────────────────────── Worker loop ─────────────────────────
 
     def _worker_loop(self) -> None:
         while not self._stop_evt.is_set():
@@ -71,76 +79,82 @@ class SceneAnalyzer:
             or c.get("MOTION_SHADOW_EMPHASIS", False)
         )
 
+    # ───────────────────────── Desktop sampling ─────────────────────────
+
     def _sample_desktop_rgb(self, w: int = 64, h: int = 64) -> np.ndarray:
         """
         Capture a low-resolution RGB sample of the current desktop.
-        FPS-safe: single StretchBlt + bitmap readback.
         Returns float32 RGB array in [0,1].
         """
-        memdc = self.gdi32.CreateCompatibleDC(self.hdc)
-        bmp = self.gdi32.CreateCompatibleBitmap(self.hdc, w, h)
-        self.gdi32.SelectObject(memdc, bmp)
+        user32 = self.user32
+        gdi32 = self.gdi32
 
-        self.gdi32.StretchBlt(
-            memdc,
-            0, 0, w, h,
-            self.hdc,
-            0, 0,
-            self.user32.GetSystemMetrics(0),
-            self.user32.GetSystemMetrics(1),
-            0x00CC0020,  # SRCCOPY
-        )
+        screen_w = user32.GetSystemMetrics(0)
+        screen_h = user32.GetSystemMetrics(1)
 
-        import ctypes
-        buf = (ctypes.c_ubyte * (w * h * 4))()
-        self.gdi32.GetBitmapBits(bmp, len(buf), buf)
+        memdc = gdi32.CreateCompatibleDC(self.hdc)
+        bmp = gdi32.CreateCompatibleBitmap(self.hdc, w, h)
+        gdi32.SelectObject(memdc, bmp)
 
-        self.gdi32.DeleteObject(bmp)
-        self.gdi32.DeleteDC(memdc)
+        try:
+            gdi32.StretchBlt(
+                memdc,
+                0, 0, w, h,
+                self.hdc,
+                0, 0,
+                screen_w,
+                screen_h,
+                0x00CC0020,  # SRCCOPY
+            )
 
-        arr = np.frombuffer(buf, dtype=np.uint8).reshape((h, w, 4))
-        return arr[:, :, :3].astype(np.float32) / 255.0
+            import ctypes
+            buf = (ctypes.c_ubyte * (w * h * 4))()
+            gdi32.GetBitmapBits(bmp, len(buf), buf)
+
+            arr = np.frombuffer(buf, dtype=np.uint8).reshape((h, w, 4))
+            return arr[:, :, :3].astype(np.float32) * (1.0 / 255.0)
+
+        finally:
+            gdi32.DeleteObject(bmp)
+            gdi32.DeleteDC(memdc)
+
+    # ───────────────────────── Metrics ─────────────────────────
 
     def _compute_motion(self, luma: np.ndarray) -> float:
-        """
-        Motion strength from luma delta (mean abs diff).
-        Handles enable/disable and internal state reset.
-        """
         if not self.config.get("MOTION_AWARE_SHADOWS", False):
             self._prev_luma = None
             self.motion_strength = 0.0
             return 0.0
 
-        motion = 0.0
-        if self._prev_luma is not None:
-            diff = np.abs(luma - self._prev_luma)
-            motion = float(diff.mean())
+        if self._prev_luma is None:
+            self._prev_luma = luma
+            return 0.0
 
+        diff = np.abs(luma - self._prev_luma)
         self._prev_luma = luma
-        return motion
+        return float(diff.mean())
 
     def update(self) -> None:
         """
-        Update metrics with built-in caps:
-          - won't run if window minimized or no foreground window
-          - 5Hz cap
-          - stall / hitch guard (delta > 0.6s)
+        Update metrics with built-in guards:
+          - inactive / disabled
+          - 5 Hz rate limit
+          - hitch protection
+          - minimized / no foreground window
         """
-        if not self.is_active():
-            self._last_update = time.time()
-            return
-
-        if not self._adaptive_enabled():
+        if not self.is_active() or not self._adaptive_enabled():
             self._last_update = time.time()
             return
 
         now = time.time()
         delta = now - self._last_update
 
+        # Hitch / stall guard
         if delta > 0.6:
             self._last_update = now
             return
 
+        # 5 Hz cap
         if delta < 0.2:
             return
 
@@ -154,13 +168,14 @@ class SceneAnalyzer:
             rgb = self._sample_desktop_rgb()
             luma = rgb.mean(axis=2)
 
-            motion = self._compute_motion(luma)
             avg = float(luma.mean())
             shadow = float((luma < 0.25).mean())
 
             gx = np.abs(np.diff(luma, axis=1))
             gy = np.abs(np.diff(luma, axis=0))
-            edge = float(np.mean(gx) + np.mean(gy))
+            edge = float(gx.mean() + gy.mean())
+
+            motion = self._compute_motion(luma)
 
             with self._lock:
                 alpha = 0.2
@@ -170,7 +185,10 @@ class SceneAnalyzer:
 
                 if self.config.get("MOTION_AWARE_SHADOWS", False):
                     m_alpha = float(self.config.get("MOTION_SMOOTHING", 0.15))
-                    self.motion_strength = self.motion_strength * (1 - m_alpha) + motion * m_alpha
+                    self.motion_strength = (
+                        self.motion_strength * (1 - m_alpha) + motion * m_alpha
+                    )
 
         except Exception:
+            # Fail silently; analyzer must never crash the pipeline
             return
