@@ -192,6 +192,17 @@ default_config.update({
     "HUD_EXCLUSION": False,
     "HUD_EXCLUSION_STRENGTH": 0.60,
     "HUD_EXCLUSION_THRESHOLD": 0.90,
+    
+    # Motion-aware adaptive shadows
+    "MOTION_AWARE_SHADOWS": False,
+
+    # Profile-aware motion boost
+    "MOTION_STRENGTH_INDOOR": 0.75,
+    "MOTION_STRENGTH_OUTDOOR": 0.45,
+
+    "MOTION_SENSITIVITY": 2.5,
+    "MOTION_SMOOTHING": 0.15,
+
 })
 
 
@@ -243,7 +254,23 @@ def to_ramp(arr):
 def identity_ramp():
     return np.concatenate([np.linspace(0, 65535, 256, dtype=np.uint16)] * 3)
 
+# Shared LUT x-axis (cached)
+X_AXIS = np.linspace(0, 1, 256)
+
+MID_05_MASK = X_AXIS < 0.5
+MID_07_MASK = X_AXIS < 0.7
+HI_085_MASK = X_AXIS > 0.85
+
 # === LOW-RES DESKTOP SAMPLING (FPS-SAFE) ===
+
+def adaptive_enabled():
+    return (
+        config.get("HISTOGRAM_ADAPTIVE", False) or
+        config.get("EDGE_AWARE_SHADOWS", False) or
+        config.get("OPPONENT_TUNING", False) or
+        config.get("HUD_EXCLUSION", False) or
+        config.get("MOTION_AWARE_SHADOWS", False)
+    )
 
 class SceneAnalyzer:
     def __init__(self):
@@ -252,16 +279,27 @@ class SceneAnalyzer:
         self.edge_strength = 0.0
         self.lock = Lock()
         self.last_update = 0.0
-        self.last_delta = 0.2
+        self.motion_strength = 0.0
+        self._prev_luma = None
 
     def update(self):
+        # Skip entirely if gamma is OFF
+        if gamma_state.current_mode is None:
+            self.last_update = time.time()
+            return
+
+        # Skip if no adaptive features are enabled
+        if not adaptive_enabled():
+            self.last_update = time.time()
+            return
+
+
         now = time.time()
         delta = now - self.last_update
 
         # Freeze metrics if updates stall badly (FPS drop / hitch)
         if delta > 0.6:
             self.last_update = now
-            self.last_delta = delta
             return
 
         # 5 Hz cap
@@ -269,7 +307,6 @@ class SceneAnalyzer:
             return
 
         self.last_update = now
-        self.last_delta = delta
 
         hwnd = user32.GetForegroundWindow()
         if not hwnd or user32.IsIconic(hwnd):
@@ -298,6 +335,21 @@ class SceneAnalyzer:
             arr = np.frombuffer(buf, dtype=np.uint8).reshape((h, w, 4))
             rgb = arr[:, :, :3].astype(np.float32) / 255.0
             luma = rgb.mean(axis=2)
+            
+            # === Motion detection (FPS-safe) ===
+            motion = 0.0
+
+            if config.get("MOTION_AWARE_SHADOWS", False):
+                if self._prev_luma is not None:
+                    diff = np.abs(luma - self._prev_luma)
+                    motion = float(diff.mean())
+
+                self._prev_luma = luma
+            else:
+                # Hard reset when disabled (prevents stale motion)
+                self._prev_luma = None
+                self.motion_strength = 0.0
+
 
             avg = float(luma.mean())
             shadow = float((luma < 0.25).mean())
@@ -305,12 +357,21 @@ class SceneAnalyzer:
             gx = np.abs(np.diff(luma, axis=1))
             gy = np.abs(np.diff(luma, axis=0))
             edge = float(np.mean(gx) + np.mean(gy))
-
+            
             with self.lock:
                 alpha = 0.2
                 self.avg_luma = self.avg_luma * (1 - alpha) + avg * alpha
                 self.shadow_density = self.shadow_density * (1 - alpha) + shadow * alpha
                 self.edge_strength = self.edge_strength * (1 - alpha) + edge * alpha
+
+                if config.get("MOTION_AWARE_SHADOWS", False):
+                    m_alpha = config.get("MOTION_SMOOTHING", 0.15)
+                    self.motion_strength = (
+                        self.motion_strength * (1 - m_alpha) +
+                        motion * m_alpha
+                    )
+
+
 
         except Exception as e:
             logging.debug(f"SceneAnalyzer error: {e}")
@@ -319,6 +380,12 @@ scene_analyzer = SceneAnalyzer()
 
 def scene_worker():
     while True:
+        # Nothing can change → sleep longer
+        if gamma_state.current_mode is None or not adaptive_enabled():
+            time.sleep(0.25)
+            continue
+
+        # Adaptive + profile active → run normally
         scene_analyzer.update()
         time.sleep(0.05)
 
@@ -327,11 +394,16 @@ executor.submit(scene_worker)
 # === Gamma LUT Functions
 @lru_cache(maxsize=32)
 def base_curve(gamma, offset):
-    x = np.linspace(0, 1, 256)
+    # Start from shared cached axis (read-only usage)
+    x = X_AXIS
+
+    # Any operation below must allocate a new array
     if offset:
-        x = np.clip(x + offset, 0, 1)
+        x = np.clip(x + offset, 0.0, 1.0)
+
     if gamma != 1.0:
         x = np.power(x, 1.0 / gamma)
+
     return x
 
 def fast_array_signature(arr):
@@ -339,27 +411,43 @@ def fast_array_signature(arr):
 
 # === ADAPTIVE HELPERS (SCALAR-ONLY, FPS-SAFE) ===
 
+_adaptive_state = {}   # persistent smoothed adaptive params
+
+def smooth_param(name, target, alpha=0.15):
+    prev = _adaptive_state.get(name, target)
+    value = prev * (1.0 - alpha) + target * alpha
+    _adaptive_state[name] = value
+    return value
+
 def get_scene_metrics():
     with scene_analyzer.lock:
         return (
             scene_analyzer.avg_luma,
             scene_analyzer.shadow_density,
             scene_analyzer.edge_strength,
+            scene_analyzer.motion_strength,
         )
 
 def apply_histogram_adaptation(p):
     p = dict(p)
 
     if not config.get("HISTOGRAM_ADAPTIVE", False):
+        _adaptive_state.clear()
         return p
 
-    avg, shadow_density, _ = get_scene_metrics()
+
+    avg, shadow_density, edge, motion = get_scene_metrics()
 
     lo = config["HISTOGRAM_MIN_LUMA"]
     hi = config["HISTOGRAM_MAX_LUMA"]
-    strength = config["HISTOGRAM_STRENGTH"] * (
-        1.15 if p.get("PROFILE") == "INDOOR" else 0.85
-    )
+    strength = config["HISTOGRAM_STRENGTH"]
+    
+    profile = p.get("PROFILE")
+    if profile == "OUTDOOR":
+        strength *= 0.75
+    elif profile == "INDOOR":
+        strength *= 1.15
+
 
     if avg < lo:
         t = np.clip((lo - avg) / lo, 0.0, 1.0) * strength
@@ -378,6 +466,19 @@ def apply_histogram_adaptation(p):
     p["SHADOW_DESAT"] = np.clip(p["SHADOW_DESAT"], 0.5, 1.0)
     p["SHADOW_SIGMOID_BOOST"] = np.clip(p["SHADOW_SIGMOID_BOOST"], 0.0, 1.0)
 
+    # === Temporal smoothing of adaptive parameters ===
+    smooth = 0.2
+
+    profile = p.get("PROFILE", "GLOBAL")
+    p["SHADOW_CUTOFF"] = smooth_param(
+        f"{profile}_SHADOW_CUTOFF", p["SHADOW_CUTOFF"], smooth
+    )
+    p["SHADOW_DESAT"] = smooth_param(
+        f"{profile}_SHADOW_DESAT", p["SHADOW_DESAT"], smooth
+    )
+    p["SHADOW_SIGMOID_BOOST"] = smooth_param(
+        f"{profile}_SHADOW_SIGMOID_BOOST", p["SHADOW_SIGMOID_BOOST"], smooth
+    )
 
     return p
 
@@ -385,7 +486,7 @@ def edge_shadow_scale():
     if not config.get("EDGE_AWARE_SHADOWS", False):
         return 1.0
 
-    _, _, edge = get_scene_metrics()
+    _, _, edge, _ = get_scene_metrics()  # ✅ correct
     mn = config["EDGE_MIN"]
     mx = config["EDGE_MAX"]
     strength = config["EDGE_STRENGTH"]
@@ -397,33 +498,37 @@ def edge_shadow_scale():
 def build_ramp_array(mode):
     m = mode.value.upper()
     p = {k.replace(f"_{m}", ""): config[k] for k in config if k.endswith(m)}
-    
-    # Tag active profile for adaptive logic
+
+    # Tag active profile
     p["PROFILE"] = m
+
+    adaptive = adaptive_enabled()
     
     # === Histogram-aware parameter adaptation (optional) ===
-    p = apply_histogram_adaptation(p)
+    if adaptive:
+        p = apply_histogram_adaptation(p)
 
     pop = np.clip(config.get("SHADOW_POP_STRENGTH", 0.0), 0.0, 1.0)
     if pop > 0.0:
         p["GAMMA"] *= (1.0 + 0.04 * pop)
-        p["SHADOW_DESAT"] -= 0.10 * pop
-        p["SHADOW_COLOR_BIAS"] += 0.005 * pop
+        p["SHADOW_SIGMOID_BOOST"] += 0.15 * pop
+        p["SHADOW_DESAT"] -= 0.06 * pop
         p["MIDTONE_BOOST"] *= 1.0 + (0.03 * pop)
         p["RED_MULTIPLIER"] *= 1.0 + (0.01 * pop)
         p["BLUE_MULTIPLIER"] *= 1.0 - (0.005 * pop)
         
+    p["SHADOW_SIGMOID_BOOST"] = np.clip(p["SHADOW_SIGMOID_BOOST"], 0.0, 1.0)
     p["SHADOW_CUTOFF"] = np.clip(p["SHADOW_CUTOFF"], 0.15, 0.6)
     p["GAMMA"] = np.clip(p["GAMMA"], 0.75, 1.6)
 
 
-    x = np.linspace(0, 1, 256)
+    x = X_AXIS
     base = base_curve(p["GAMMA"], p["GAMMA_OFFSET"]).copy()
     bf = np.clip(p["BLACK_FLOOR"], 0.0, 0.10)
     base = bf + base * (1.0 - bf)
 
     # === Edge-aware shadow scaling (optional) ===
-    edge_scale = edge_shadow_scale() if config.get("EDGE_AWARE_SHADOWS", False) else 1.0
+    edge_scale = edge_shadow_scale() if adaptive else 1.0
     
     cutoff = np.clip(p["SHADOW_CUTOFF"], 0.15, 0.6)
     shadow = x < cutoff
@@ -445,18 +550,37 @@ def build_ramp_array(mode):
 
     # Sigmoid contrast shaping (mid-shadow)
     sig_strength = np.clip(p.get("SHADOW_SIGMOID_BOOST", 0.0), 0.0, 1.0)
+
+    if adaptive:
+        _, shadow_density, _, motion = get_scene_metrics()
+
+        # Shadow density scaling
+        sig_strength *= np.clip(0.5 + shadow_density, 0.5, 1.0)
+
+        # Motion-aware boost (only if enabled)
+        if config.get("MOTION_AWARE_SHADOWS", False):
+            sensitivity = config.get("MOTION_SENSITIVITY", 2.5)
+            profile = p.get("PROFILE", "GLOBAL")
+            strength = config.get(f"MOTION_STRENGTH_{profile}", 0.6)
+
+            motion_t = np.clip(motion * sensitivity, 0.0, 1.0)
+            sig_strength *= (1.0 + motion_t * strength)
+
+            
+    sig_strength = np.clip(sig_strength, 0.0, 1.25)
+
     if sig_strength > 0.0:
-        mid = (x >= cutoff) & (x < 0.5)
+        mid = MID_05_MASK & ~shadow
         t = (x[mid] - cutoff) / (0.5 - cutoff)
         sigmoid = 1 / (1 + np.exp(-8 * (t - 0.5)))
         s = sig_strength * min(edge_scale, 1.3)
         base[mid] = base[mid] * (1 - s) + sigmoid * s
 
 
-    mid = (x >= cutoff) & (x < 0.7)
+    mid = MID_07_MASK & ~shadow
     base[mid] *= p["MIDTONE_BOOST"]
 
-    hi = base > 0.85
+    hi = HI_085_MASK
     base[hi] = 0.85 + (base[hi] - 0.85) * p["HIGHLIGHT_COMPRESS"]
 
     # === HUD highlight preservation / exclusion ===
@@ -527,12 +651,16 @@ def build_ramp_array(mode):
         r *= scale
         g *= scale
         b *= scale
-
-
+        
+        # === Final shadow-only safety clamp (post opponent tuning)
+        # Prevent rare channel spikes without affecting mid/high tones
+        r[shadow] = np.clip(r[shadow], 0.0, 1.0)
+        g[shadow] = np.clip(g[shadow], 0.0, 1.0)
+        b[shadow] = np.clip(b[shadow], 0.0, 1.0)
 
     desat = p["SHADOW_DESAT"]
     if desat < 1.0:
-        lum = (r + g + b) / 3.0
+        lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
         r[shadow] = lum[shadow] + (r[shadow] - lum[shadow]) * desat
         g[shadow] = lum[shadow] + (g[shadow] - lum[shadow]) * desat
         b[shadow] = lum[shadow] + (b[shadow] - lum[shadow]) * desat
@@ -748,6 +876,31 @@ def rebuild_gui():
                     "EDGE_MIN", 0.0, 0.5, 0.01)
         draw_slider(scroll_frame, "Edge Max",
                     "EDGE_MAX", 0.3, 1.0, 0.01)
+                    
+    # Motion-aware shadows
+    motion_var = tk.BooleanVar(value=config["MOTION_AWARE_SHADOWS"])
+
+    def toggle_motion():
+        config["MOTION_AWARE_SHADOWS"] = motion_var.get()
+        config_mgr.debounce_save()
+        gamma_state.rebuild_debounced()
+
+    tk.Checkbutton(
+        scroll_frame,
+        text="Motion-aware Shadow Boost",
+        variable=motion_var,
+        command=toggle_motion,
+        bg=bg, fg=fg, selectcolor=bg
+    ).pack(anchor="w", padx=6, pady=(6, 0))
+
+    if motion_var.get():
+        m = gamma_state.current_mode.value.upper()
+
+        draw_slider(scroll_frame, f"Motion Strength ({m})",
+                    f"MOTION_STRENGTH_{m}", 0.0, 1.0, 0.01)
+        draw_slider(scroll_frame, "Motion Sensitivity",
+                    "MOTION_SENSITIVITY", 0.5, 5.0, 0.1)
+
 
     # Opponent channel tuning
     opp_var = tk.BooleanVar(value=config["OPPONENT_TUNING"])
