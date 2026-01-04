@@ -1,5 +1,5 @@
 """
-    WinGammaTuner – Competitive FPS Edition
+    WinGammaTuner – Competitive FPS Edition 
 ===========================================
 
 A low-latency, real-time gamma and color curve controller for Windows displays,

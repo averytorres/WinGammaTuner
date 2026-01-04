@@ -1,0 +1,7 @@
+# Ignore everything
+*
+
+# But do NOT ignore this file
+!gamma_controller.py
+!.gitignore
+ 
