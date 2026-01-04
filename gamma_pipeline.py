@@ -446,10 +446,10 @@ class GammaPipeline:
                 if motion_t > 0.0:
                     base += (base - float(np.mean(base))) * motion_t * 0.04
 
-                dx2 = np.gradient(base)
-                dx2 = np.maximum(dx2, 0.012)
-                base = np.cumsum(dx2)
-                base /= base[-1]
+                    dx2 = np.gradient(base)
+                    dx2 = np.maximum(dx2, 0.012)
+                    base = np.cumsum(dx2)
+                    base /= base[-1]
 
                 if motion_emphasis > 0.0:
                     sig_strength *= (1.0 + 1.2 * motion_emphasis)
