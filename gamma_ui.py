@@ -25,7 +25,7 @@ class CanvasSlider(tk.Canvas):
         self.create_rectangle(0, 9, 240, 11, fill="#333", outline="")
         self.thumb = self.create_oval(0, 4, 12, 16, fill="#007acc", outline="")
 
-        self.bind("<ButtonPress-1>", self._drag)
+        self.bind("<ButtonPress-1>", self._press)
         self.bind("<B1-Motion>", self._drag)
         self.bind("<ButtonRelease-1>", self._release)
 
@@ -42,6 +42,14 @@ class CanvasSlider(tk.Canvas):
         self.coords(self.thumb, x, 4, x + 12, 16)
         if notify:
             self.command(self.value, dragging)
+
+    def _press(self, e):
+        # Ensure widget has focus so modifier state (Ctrl/Shift) is reported reliably
+        try:
+            self.focus_set()
+        except Exception:
+            pass
+        self._drag(e)
 
     def _drag(self, e):
         t = max(0.0, min(1.0, e.x / self.usable))
