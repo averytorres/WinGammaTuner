@@ -154,6 +154,7 @@ class GammaUI:
         def on_change(v, dragging):
             self.config[key] = float(v)
             val.set(f"{v:.{dec}f}")
+            value_label.config(fg="#ffffff" if dragging else "#aaa")
             self.controller.rebuild_debounced()
             if not dragging:
                 self.config_mgr.debounce_save()
@@ -161,7 +162,8 @@ class GammaUI:
         slider = CanvasSlider(row, mn, mx, init, on_change, step, bg=self.bg)
         slider.pack(side=tk.LEFT, padx=6)
 
-        tk.Label(row, textvariable=val, bg=self.bg, fg="#aaa", width=8).pack(side=tk.LEFT)
+        value_label = tk.Label(row, textvariable=val, bg=self.bg, fg="#aaa", width=8)
+        value_label.pack(side=tk.LEFT)
 
         tk.Button(
             row, text="Reset", bg=self.btn, fg=self.fg, width=6,
@@ -195,8 +197,13 @@ class GammaUI:
                 w.destroy()
 
         if self.controller.current_mode is None:
-            tk.Label(self.frames["Profile"], text="Gamma OFF\nF8 / F9",
-                     fg="red", bg=self.bg).pack(pady=20)
+            for f in self.frames.values():
+                tk.Label(
+                    f,
+                    text="Gamma OFF\nF8 / F9",
+                    fg="red",
+                    bg=self.bg
+                ).pack(pady=20)
             return
 
         m = self.controller.current_mode.value.upper()
