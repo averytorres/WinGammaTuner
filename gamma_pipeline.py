@@ -392,7 +392,7 @@ class GammaPipeline:
         cutoff = float(np.clip(p.get("SHADOW_CUTOFF", 0.35), 0.15, 0.6))
         # Parity with monolith: expand shadow cutoff based on motion emphasis
         if adaptive and motion_emphasis > 0.0:
-            cutoff += 0.04 * motion_emphasis
+            cutoff += 0.09 * motion_emphasis
             cutoff = float(np.clip(cutoff, 0.15, 0.6))
         base, shadow, soft_shadow = self._apply_shadow_lift(
             base, x, cutoff, float(p.get("SHADOW_LIFT_EXP", 0.7)), edge_scale
@@ -413,7 +413,8 @@ class GammaPipeline:
         base[toe] += toe_strength * (ttoe * ttoe) * dx[toe]
 
         if adaptive and motion_emphasis > 0.0:
-            base[toe] += (0.025 * motion_emphasis)
+            base[toe] += (0.04 * motion_emphasis)
+            #base[toe] += (0.025 * motion_emphasis)
 
         # Sigmoid contrast shaping (mid-shadow)
         sig_strength = float(np.clip(p.get("SHADOW_SIGMOID_BOOST", 0.0), 0.0, 1.0))
@@ -434,7 +435,8 @@ class GammaPipeline:
                 sig_strength *= (1.0 + motion_t * strength)
 
                 if motion_t > 0.0:
-                    base += (base - float(np.mean(base))) * motion_t * 0.04
+                    base += (base - float(np.mean(base))) * motion_t * (0.06 + 0.08 * motion_emphasis)
+                    #base += (base - float(np.mean(base))) * motion_t * 0.09
 
                     dx2 = np.gradient(base)
                     dx2 = np.maximum(dx2, 0.012)
@@ -442,7 +444,8 @@ class GammaPipeline:
                     base /= base[-1]
 
                 if motion_emphasis > 0.0:
-                    sig_strength *= (1.0 + 1.2 * motion_emphasis)
+                    sig_strength *= (1.0 + 2.8 * motion_emphasis)
+                    #sig_strength *= (1.0 + 2.0 * motion_emphasis)
 
         sig_strength = float(np.clip(sig_strength, 0.0, 1.25))
 
