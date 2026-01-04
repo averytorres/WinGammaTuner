@@ -4,9 +4,9 @@ Separated from the LUT math and from Tk UI.
 
 Public API:
 - SceneAnalyzer(user32, gdi32, hdc, config: dict, is_active: callable)
-    - start(executor)  # optional background loop
+    - start(executor)
     - stop()
-    - update()         # single update (thread-safe)
+    - update()
     - get_metrics() -> (avg_luma, shadow_density, edge_strength, motion_strength)
 """
 
@@ -70,13 +70,16 @@ class SceneAnalyzer:
 
     def _adaptive_enabled(self) -> bool:
         c = self.config
-        return bool(
-            c.get("HISTOGRAM_ADAPTIVE", False)
-            or c.get("EDGE_AWARE_SHADOWS", False)
-            or c.get("OPPONENT_TUNING", False)
-            or c.get("HUD_EXCLUSION", False)
-            or c.get("MOTION_AWARE_SHADOWS", False)
-            or c.get("MOTION_SHADOW_EMPHASIS", False)
+        return any(
+            c.get(k, False)
+            for k in (
+                "HISTOGRAM_ADAPTIVE",
+                "EDGE_AWARE_SHADOWS",
+                "OPPONENT_TUNING",
+                "HUD_EXCLUSION",
+                "MOTION_AWARE_SHADOWS",
+                "MOTION_SHADOW_EMPHASIS",
+            )
         )
 
     # ───────────────────────── Desktop sampling ─────────────────────────
@@ -123,16 +126,15 @@ class SceneAnalyzer:
     def _compute_motion(self, luma: np.ndarray) -> float:
         if not self.config.get("MOTION_AWARE_SHADOWS", False):
             self._prev_luma = None
-            self.motion_strength = 0.0
             return 0.0
 
-        if self._prev_luma is None:
-            self._prev_luma = luma
-            return 0.0
-
-        diff = np.abs(luma - self._prev_luma)
+        prev = self._prev_luma
         self._prev_luma = luma
-        return float(diff.mean())
+
+        if prev is None:
+            return 0.0
+
+        return float(np.abs(luma - prev).mean())
 
     def update(self) -> None:
         """
@@ -171,24 +173,26 @@ class SceneAnalyzer:
             avg = float(luma.mean())
             shadow = float((luma < 0.25).mean())
 
-            gx = np.abs(np.diff(luma, axis=1))
-            gy = np.abs(np.diff(luma, axis=0))
-            edge = float(gx.mean() + gy.mean())
+            gx = np.abs(np.diff(luma, axis=1)).mean()
+            gy = np.abs(np.diff(luma, axis=0)).mean()
+            edge = float(gx + gy)
 
             motion = self._compute_motion(luma)
 
             with self._lock:
                 alpha = 0.2
-                self.avg_luma = self.avg_luma * (1 - alpha) + avg * alpha
-                self.shadow_density = self.shadow_density * (1 - alpha) + shadow * alpha
-                self.edge_strength = self.edge_strength * (1 - alpha) + edge * alpha
+                self.avg_luma += (avg - self.avg_luma) * alpha
+                self.shadow_density += (shadow - self.shadow_density) * alpha
+                self.edge_strength += (edge - self.edge_strength) * alpha
 
                 if self.config.get("MOTION_AWARE_SHADOWS", False):
                     m_alpha = float(self.config.get("MOTION_SMOOTHING", 0.15))
-                    self.motion_strength = (
-                        self.motion_strength * (1 - m_alpha) + motion * m_alpha
+                    self.motion_strength += (
+                        (motion - self.motion_strength) * m_alpha
                     )
+                else:
+                    self.motion_strength = 0.0
 
         except Exception:
-            # Fail silently; analyzer must never crash the pipeline
+            # Analyzer must never crash the pipeline
             return

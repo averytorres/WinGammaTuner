@@ -1,13 +1,3 @@
-"""
-Tkinter UI for live tuning.
-Restores the dark themed CanvasSlider, collapsible sections, tabs, and reset behavior.
-
-Public API:
-- GammaUI(root, controller, config, defaults, config_mgr)
-    - show() / toggle() / hide()
-    - rebuild()  # safe to call from controller/main (uses root.after)
-"""
-
 from __future__ import annotations
 
 import math
@@ -17,21 +7,23 @@ from typing import Dict, Optional
 
 
 def _decimals(step: float) -> int:
+    if step <= 0:
+        return 0
     return max(0, int(-math.log10(step))) if step < 1 else 0
 
 
 class CanvasSlider(tk.Canvas):
-    def __init__(self, parent, mn, mx, value, command, step, *, bg, fg_thumb="#007acc"):
+    def __init__(self, parent, mn, mx, value, command, step, *, bg):
         super().__init__(parent, width=240, height=20, bg=bg, highlightthickness=0)
-        self.min = mn
-        self.max = mx
+        self.min = float(mn)
+        self.max = float(mx)
+        self.step = float(step)
         self.command = command
-        self.step = step
         self.usable = 228
         self.value = float(value)
 
         self.create_rectangle(0, 9, 240, 11, fill="#333", outline="")
-        self.thumb = self.create_oval(0, 4, 12, 16, fill=fg_thumb, outline="")
+        self.thumb = self.create_oval(0, 4, 12, 16, fill="#007acc", outline="")
 
         self.bind("<ButtonPress-1>", self._drag)
         self.bind("<B1-Motion>", self._drag)
@@ -40,31 +32,31 @@ class CanvasSlider(tk.Canvas):
         self.set_value(self.value, notify=False)
 
     def _quantize(self, v: float) -> float:
-        return round(v / self.step) * self.step
+        return round(v / self.step) * self.step if self.step > 0 else v
 
-    def set_value(self, v: float, notify: bool = True):
-        self.value = float(self._quantize(max(self.min, min(self.max, v))))
+    def set_value(self, v: float, *, notify=True, dragging=False):
+        v = max(self.min, min(self.max, float(v)))
+        self.value = self._quantize(v)
         span = self.max - self.min
         x = int((self.value - self.min) / span * self.usable) if span else 0
         self.coords(self.thumb, x, 4, x + 12, 16)
         if notify:
-            self.command(self.value, False)
+            self.command(self.value, dragging)
 
     def _drag(self, e):
         t = max(0.0, min(1.0, e.x / self.usable))
+        target = self.min + t * (self.max - self.min)
         span = self.max - self.min
-        target = self.min + t * span
 
+        # Precision modifiers (monolith parity)
         if e.state & 0x0004:  # Ctrl
-            target = self.value + (target - self.value) * min(0.05, 0.01 / max(span, 1e-9))
+            target = self.value + (target - self.value) * min(0.05, 0.01 / span)
         elif e.state & 0x0001:  # Shift
-            target = self.value + (target - self.value) * min(0.2, 0.04 / max(span, 1e-9))
+            target = self.value + (target - self.value) * min(0.2, 0.04 / span)
 
-        self.value = float(self._quantize(target))
-        self.command(self.value, True)
-        self.set_value(self.value, notify=False)
+        self.set_value(target, notify=True, dragging=True)
 
-    def _release(self, _e):
+    def _release(self, _):
         self.command(self.value, False)
 
 
@@ -83,26 +75,32 @@ class GammaUI:
         self.window: Optional[tk.Toplevel] = None
         self.frames: Dict[str, tk.Frame] = {}
 
-        self._slider_widgets: Dict[str, CanvasSlider] = {}
-        self._value_labels: Dict[str, tk.StringVar] = {}
+    # ───────── lifecycle ─────────
 
-    # ───────────────────────── Window lifecycle ─────────────────────────
+    def toggle(self):
+        if self.window and self.window.winfo_exists():
+            if self.window.state() == "withdrawn":
+                self.window.deiconify()
+            else:
+                self.window.withdraw()
+        else:
+            self.show()
 
     def show(self):
         if self.window and self.window.winfo_exists():
             self.window.deiconify()
-            self.window.lift()
             return
 
         self.window = tk.Toplevel(self.root)
         self.window.title("Gamma Control")
-        self.window.geometry("640x600")
+        self.window.geometry("780x720")
         self.window.configure(bg=self.bg)
-        self.window.protocol("WM_DELETE_WINDOW", self.hide)
+        self.window.protocol("WM_DELETE_WINDOW", self.window.withdraw)
 
         nb = ttk.Notebook(self.window)
         nb.pack(fill=tk.BOTH, expand=True)
 
+        self.frames.clear()
         for name in ("Profile", "Adaptive", "Advanced", "Global"):
             tab = tk.Frame(nb, bg=self.bg)
             nb.add(tab, text=name)
@@ -110,51 +108,15 @@ class GammaUI:
 
         self.rebuild()
 
-    def hide(self):
-        if self.window and self.window.winfo_exists():
-            self.window.withdraw()
+    # ───────── helpers ─────────
 
-    def toggle(self):
-        if self.window and self.window.winfo_exists() and self.window.state() != "withdrawn":
-            self.hide()
-        else:
-            self.show()
+    def _pk(self, key: str) -> str:
+        return f"{key}_{self.controller.current_mode.value.upper()}"
 
-    def rebuild(self):
-        self.root.after(0, self._rebuild_impl)
+    def _get(self, key: str, fallback):
+        return self.config.get(key, self.defaults.get(key, fallback))
 
-    # ───────────────────────── Core rebuild ─────────────────────────
-
-    def _rebuild_impl(self):
-        if not self.window or not self.window.winfo_exists():
-            return
-
-        for frame in self.frames.values():
-            for w in frame.winfo_children():
-                w.destroy()
-
-        self._slider_widgets.clear()
-        self._value_labels.clear()
-
-        if self.controller.current_mode is None:
-            prof = self.frames["Profile"]
-            tk.Label(
-                prof,
-                text="Gamma OFF\nF8 / F9",
-                bg=self.bg,
-                fg="red",
-                font=("Segoe UI", 12, "bold"),
-            ).pack(pady=20)
-            return
-
-        self._build_profile_tab(self.frames["Profile"])
-        self._build_adaptive_tab(self.frames["Adaptive"])
-        self._build_advanced_tab(self.frames["Advanced"])
-        self._build_global_tab(self.frames["Global"])
-
-    # ───────────────────────── Layout helpers ─────────────────────────
-
-    def _make_scrollable(self, parent) -> tk.Frame:
+    def _make_scrollable(self, parent):
         canvas = tk.Canvas(parent, bg=self.bg, highlightthickness=0)
         scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
         frame = tk.Frame(canvas, bg=self.bg)
@@ -162,201 +124,123 @@ class GammaUI:
         canvas.configure(yscrollcommand=scrollbar.set)
         canvas.create_window((0, 0), window=frame, anchor="nw")
 
-        frame.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        frame.bind("<Configure>", lambda _: canvas.configure(scrollregion=canvas.bbox("all")))
+        self.root.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-e.delta / 120), "units"), add="+")
 
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         return frame
 
-    def _section(self, parent, title: str, start_open: bool = True) -> tk.Frame:
-        container = tk.Frame(parent, bg=self.bg)
-        container.pack(fill=tk.X)
+    # ───────── widgets ─────────
 
-        header = tk.Frame(container, bg=self.bg)
-        header.pack(fill=tk.X, padx=6, pady=(10, 4))
-
-        arrow = tk.StringVar(value="▼" if start_open else "▶")
-        visible = tk.BooleanVar(value=start_open)
-
-        arrow_lbl = tk.Label(header, textvariable=arrow, bg=self.bg, fg="#888",
-                             font=("Segoe UI", 10, "bold"), width=2)
-        arrow_lbl.pack(side=tk.LEFT)
-
-        title_lbl = tk.Label(header, text=title, bg=self.bg, fg="#bbb",
-                             font=("Segoe UI", 10, "bold"), cursor="hand2")
-        title_lbl.pack(side=tk.LEFT)
-
-        body = tk.Frame(container, bg=self.bg)
-
-        def toggle():
-            is_open = not visible.get()
-            visible.set(is_open)
-            arrow.set("▼" if is_open else "▶")
-            (body.pack if is_open else body.pack_forget)(fill=tk.X)
-
-        for w in (header, arrow_lbl, title_lbl):
-            w.bind("<Button-1>", lambda _e: toggle())
-            w.bind("<Enter>", lambda _e: (title_lbl.config(fg="#fff"), arrow_lbl.config(fg="#fff")))
-            w.bind("<Leave>", lambda _e: (title_lbl.config(fg="#bbb"), arrow_lbl.config(fg="#888")))
-
-        if start_open:
-            body.pack(fill=tk.X)
-
-        return body
-
-    # ───────────────────────── Widgets ─────────────────────────
-
-    def _profile_key(self, key: str) -> str:
-        m = self.controller.current_mode.value.upper()
-        return f"{key}_{m}"
-
-    def _draw_slider(self, parent, label, key, mn, mx, step):
+    def _slider(self, parent, label, key, mn, mx, step):
         row = tk.Frame(parent, bg=self.bg)
-        row.pack(fill=tk.X, padx=6, pady=4)
+        row.pack(fill=tk.X, padx=8, pady=5)
 
-        tk.Label(row, text=label, bg=self.bg, fg=self.fg, width=22, anchor="w").pack(side=tk.LEFT)
+        tk.Label(row, text=label, bg=self.bg, fg=self.fg, width=24, anchor="w").pack(side=tk.LEFT)
 
-        val_var = tk.StringVar()
-        decimals = _decimals(step)
+        dec = _decimals(step)
+        init = float(self._get(key, mn))
+        val = tk.StringVar(value=f"{init:.{dec}f}")
 
-        val_lbl = tk.Label(row, textvariable=val_var, bg=self.bg, fg="#aaa", width=8)
-        val_lbl.pack(side=tk.LEFT)
-
-        initial = float(self.config.get(key, self.defaults.get(key, mn)))
-        val_var.set(f"{initial:.{decimals}f}")
-
-        def on_change(v, dragging: bool):
+        def on_change(v, dragging):
             self.config[key] = float(v)
+            val.set(f"{v:.{dec}f}")
             self.controller.rebuild_debounced()
-            val_var.set(f"{float(v):.{decimals}f}")
-            val_lbl.configure(fg="#777" if dragging else "#aaa")
             if not dragging:
                 self.config_mgr.debounce_save()
 
-        slider = CanvasSlider(
-            row,
-            mn, mx,
-            initial,
-            on_change,
-            step,
-            bg=self.bg,
-        )
+        slider = CanvasSlider(row, mn, mx, init, on_change, step, bg=self.bg)
         slider.pack(side=tk.LEFT, padx=6)
 
-        def do_reset():
-            slider.set_value(float(self.defaults[key]), notify=True)
+        tk.Label(row, textvariable=val, bg=self.bg, fg="#aaa", width=8).pack(side=tk.LEFT)
 
-        tk.Button(row, text="Reset", bg=self.btn, fg=self.fg, width=6,
-                  command=do_reset).pack(side=tk.LEFT, padx=(6, 0))
+        tk.Button(
+            row, text="Reset", bg=self.btn, fg=self.fg, width=6,
+            command=lambda: slider.set_value(self.defaults.get(key, init))
+        ).pack(side=tk.LEFT)
 
-        self._slider_widgets[key] = slider
-        self._value_labels[key] = val_var
-
-    def _draw_toggle(self, parent, label, key, *, indent=6, rebuild_ui=False) -> tk.BooleanVar:
-        var = tk.BooleanVar(value=bool(self.config.get(key, False)))
+    def _toggle(self, parent, label, key, *, rebuild_ui=False):
+        var = tk.BooleanVar(value=bool(self._get(key, False)))
 
         def on_toggle():
             self.config[key] = bool(var.get())
-            self.config_mgr.debounce_save()
             self.controller.rebuild_debounced()
+            self.config_mgr.debounce_save()
             if rebuild_ui:
                 self.rebuild()
 
-        tk.Checkbutton(
-            parent,
-            text=label,
-            variable=var,
-            command=on_toggle,
-            bg=self.bg,
-            fg=self.fg,
-            selectcolor=self.bg,
-            activebackground=self.bg,
-            activeforeground=self.fg,
-        ).pack(anchor="w", padx=indent)
+        tk.Checkbutton(parent, text=label, variable=var, command=on_toggle,
+                       bg=self.bg, fg=self.fg, selectcolor=self.bg).pack(anchor="w", padx=8, pady=4)
+        return var.get()
 
-        return var
+    # ───────── rebuild ─────────
 
-    # ───────────────────────── Tabs ─────────────────────────
+    def rebuild(self):
+        if not self.window or not self.window.winfo_exists():
+            return
+        self.root.after(0, self._rebuild_impl)
 
-    def _build_profile_tab(self, frame):
-        core = self._section(frame, "Core")
-        self._draw_slider(core, "Gamma", self._profile_key("GAMMA"), 0.75, 1.4, 0.001)
-        self._draw_slider(core, "Gamma Offset", self._profile_key("GAMMA_OFFSET"), -0.2, 0.2, 0.001)
-        self._draw_slider(core, "Black Floor", self._profile_key("BLACK_FLOOR"), 0.0, 0.1, 0.0005)
-        self._draw_slider(core, "Vibrance", self._profile_key("VIBRANCE"), 0.9, 1.3, 0.001)
+    def _rebuild_impl(self):
+        for f in self.frames.values():
+            for w in f.winfo_children():
+                w.destroy()
 
-        shadows = self._section(frame, "Shadows")
-        self._draw_slider(shadows, "Shadow Lift Exp", self._profile_key("SHADOW_LIFT_EXP"), 0.4, 1.0, 0.001)
-        self._draw_slider(shadows, "Shadow Cutoff", self._profile_key("SHADOW_CUTOFF"), 0.15, 0.6, 0.001)
-        self._draw_slider(shadows, "Shadow Desat", self._profile_key("SHADOW_DESAT"), 0.5, 1.0, 0.001)
-        self._draw_slider(shadows, "Shadow Sigmoid Boost", self._profile_key("SHADOW_SIGMOID_BOOST"), 0.0, 1.0, 0.01)
-        self._draw_slider(shadows, "Shadow Color Bias", self._profile_key("SHADOW_COLOR_BIAS"), -0.05, 0.05, 0.001)
+        if self.controller.current_mode is None:
+            tk.Label(self.frames["Profile"], text="Gamma OFF\nF8 / F9",
+                     fg="red", bg=self.bg).pack(pady=20)
+            return
 
-        mids = self._section(frame, "Midtones")
-        self._draw_slider(mids, "Midtone Boost", self._profile_key("MIDTONE_BOOST"), 0.9, 1.3, 0.001)
-
-        hi = self._section(frame, "Highlights")
-        self._draw_slider(hi, "Highlight Compress", self._profile_key("HIGHLIGHT_COMPRESS"), 0.0, 0.7, 0.001)
-
-    def _build_adaptive_tab(self, frame):
-        hist = self._section(frame, "Histogram-Aware Shadows")
-        if self._draw_toggle(hist, "Enable Histogram Adaptation", "HISTOGRAM_ADAPTIVE", rebuild_ui=True).get():
-            self._draw_slider(hist, "Strength", "HISTOGRAM_STRENGTH", 0.0, 1.0, 0.01)
-            self._draw_slider(hist, "Min Scene Luma", "HISTOGRAM_MIN_LUMA", 0.10, 0.50, 0.01)
-            self._draw_slider(hist, "Max Scene Luma", "HISTOGRAM_MAX_LUMA", 0.40, 0.90, 0.01)
-
-        motion = self._section(frame, "Motion-Based Visibility")
-        if self._draw_toggle(motion, "Enable Motion-aware Shadows", "MOTION_AWARE_SHADOWS", rebuild_ui=True).get():
-            m = self.controller.current_mode.value.upper()
-            self._draw_slider(motion, f"Motion Strength ({m})", f"MOTION_STRENGTH_{m}", 0.0, 1.0, 0.01)
-            self._draw_slider(motion, "Motion Sensitivity", "MOTION_SENSITIVITY", 0.5, 5.0, 0.1)
-
-            if self._draw_toggle(motion, "Enable Motion Shadow Emphasis", "MOTION_SHADOW_EMPHASIS", indent=18, rebuild_ui=True).get():
-                self._draw_slider(motion, "Emphasis Strength", "MOTION_SHADOW_STRENGTH", 0.0, 1.0, 0.01)
-                self._draw_slider(motion, "Dark Luma Gate", "MOTION_SHADOW_DARK_LUMA", 0.35, 0.6, 0.01)
-                self._draw_slider(motion, "Min Motion Threshold", "MOTION_SHADOW_MIN_MOTION", 0.0, 0.05, 0.001)
-
-        edge = self._section(frame, "Edge-Preserving Contrast")
-        if self._draw_toggle(edge, "Enable Edge-aware Shadows", "EDGE_AWARE_SHADOWS", rebuild_ui=True).get():
-            self._draw_slider(edge, "Edge Strength", "EDGE_STRENGTH", 0.0, 1.0, 0.01)
-            self._draw_slider(edge, "Edge Min", "EDGE_MIN", 0.0, 0.5, 0.01)
-            self._draw_slider(edge, "Edge Max", "EDGE_MAX", 0.3, 1.0, 0.01)
-
-        hud = self._section(frame, "HUD Awareness")
-        if self._draw_toggle(hud, "Enable HUD Highlight Exclusion", "HUD_EXCLUSION", rebuild_ui=True).get():
-            self._draw_slider(hud, "HUD Exclusion Strength", "HUD_EXCLUSION_STRENGTH", 0.0, 1.0, 0.01)
-            self._draw_slider(hud, "HUD Exclusion Threshold", "HUD_EXCLUSION_THRESHOLD", 0.75, 0.98, 0.01)
-
-    def _build_advanced_tab(self, frame):
         m = self.controller.current_mode.value.upper()
 
-        rgb = self._section(frame, "RGB & Channel Bias", start_open=False)
-        self._draw_slider(rgb, "Shadow Red Bias", f"SHADOW_RED_BIAS_{m}", 0.95, 1.05, 0.001)
-        self._draw_slider(rgb, "Shadow Green Bias", f"SHADOW_GREEN_BIAS_{m}", 0.95, 1.05, 0.001)
-        self._draw_slider(rgb, "Shadow Blue Bias", f"SHADOW_BLUE_BIAS_{m}", 0.95, 1.05, 0.001)
+        # ── Profile ──
+        p = self.frames["Profile"]
+        self._slider(p, "Gamma", self._pk("GAMMA"), 0.75, 1.4, 0.001)
+        self._slider(p, "Gamma Offset", self._pk("GAMMA_OFFSET"), -0.2, 0.2, 0.001)
+        self._slider(p, "Vibrance", self._pk("VIBRANCE"), 0.9, 1.3, 0.001)
+        self._slider(p, "Black Floor", self._pk("BLACK_FLOOR"), 0.0, 0.1, 0.0005)
+        self._slider(p, "Shadow Lift Exp", self._pk("SHADOW_LIFT_EXP"), 0.4, 1.0, 0.001)
+        self._slider(p, "Shadow Cutoff", self._pk("SHADOW_CUTOFF"), 0.15, 0.6, 0.001)
+        self._slider(p, "Shadow Desat", self._pk("SHADOW_DESAT"), 0.5, 1.0, 0.001)
+        self._slider(p, "Shadow Sigmoid Boost", self._pk("SHADOW_SIGMOID_BOOST"), 0.0, 1.0, 0.01)
+        self._slider(p, "Shadow Color Bias", self._pk("SHADOW_COLOR_BIAS"), -0.05, 0.05, 0.001)
+        self._slider(p, "Midtone Boost", self._pk("MIDTONE_BOOST"), 0.9, 1.3, 0.001)
+        self._slider(p, "Highlight Compress", self._pk("HIGHLIGHT_COMPRESS"), 0.0, 0.7, 0.001)
 
-        opp = self._section(frame, "Opponent Channel Tuning", start_open=False)
-        self._draw_slider(opp, "Opponent Strength", "OPPONENT_STRENGTH", 0.0, 1.0, 0.01)
-        self._draw_toggle(opp, "Enable Opponent Tuning", "OPPONENT_TUNING", rebuild_ui=True)
+        # ── Adaptive ──
+        a = self.frames["Adaptive"]
+        if self._toggle(a, "Histogram Adaptive", "HISTOGRAM_ADAPTIVE", rebuild_ui=True):
+            self._slider(a, "Histogram Strength", "HISTOGRAM_STRENGTH", 0.0, 1.0, 0.01)
+            self._slider(a, "Min Scene Luma", "HISTOGRAM_MIN_LUMA", 0.1, 0.5, 0.01)
+            self._slider(a, "Max Scene Luma", "HISTOGRAM_MAX_LUMA", 0.4, 0.9, 0.01)
 
-    def _build_global_tab(self, frame):
-        self._draw_slider(frame, "Shadow Pop Strength", "SHADOW_POP_STRENGTH", 0.0, 1.0, 0.01)
+        if self._toggle(a, "Motion Aware Shadows", "MOTION_AWARE_SHADOWS", rebuild_ui=True):
+            self._slider(a, f"Motion Strength ({m})", f"MOTION_STRENGTH_{m}", 0.0, 1.0, 0.01)
+            self._slider(a, "Motion Sensitivity", "MOTION_SENSITIVITY", 0.5, 5.0, 0.1)
 
-        var = tk.BooleanVar(value=bool(self.config.get("PRESERVE_HUD_HIGHLIGHTS", True)))
+            if self._toggle(a, "Motion Shadow Emphasis", "MOTION_SHADOW_EMPHASIS", rebuild_ui=True):
+                self._slider(a, "Emphasis Strength", "MOTION_SHADOW_STRENGTH", 0.0, 1.0, 0.01)
+                self._slider(a, "Dark Luma Gate", "MOTION_SHADOW_DARK_LUMA", 0.35, 0.6, 0.01)
+                self._slider(a, "Min Motion Threshold", "MOTION_SHADOW_MIN_MOTION", 0.0, 0.05, 0.001)
 
-        def on_toggle():
-            self.config["PRESERVE_HUD_HIGHLIGHTS"] = bool(var.get())
-            self.controller.rebuild_debounced()
-            self.config_mgr.debounce_save()
+        if self._toggle(a, "Edge Aware Shadows", "EDGE_AWARE_SHADOWS", rebuild_ui=True):
+            self._slider(a, "Edge Strength", "EDGE_STRENGTH", 0.0, 1.0, 0.01)
+            self._slider(a, "Edge Min", "EDGE_MIN", 0.0, 0.5, 0.01)
+            self._slider(a, "Edge Max", "EDGE_MAX", 0.3, 1.0, 0.01)
 
-        tk.Checkbutton(
-            frame,
-            text="Preserve HUD Highlights",
-            variable=var,
-            command=on_toggle,
-            bg=self.bg,
-            fg=self.fg,
-            selectcolor=self.bg,
-            activebackground=self.bg,
-            activeforeground=self.fg,
-        ).pack(anchor="w", padx=6, pady=8)
+        if self._toggle(a, "HUD Highlight Exclusion", "HUD_EXCLUSION", rebuild_ui=True):
+            self._slider(a, "HUD Exclusion Strength", "HUD_EXCLUSION_STRENGTH", 0.0, 1.0, 0.01)
+            self._slider(a, "HUD Threshold", "HUD_EXCLUSION_THRESHOLD", 0.75, 0.98, 0.01)
+
+        # ── Advanced ──
+        adv = self.frames["Advanced"]
+        self._slider(adv, "Shadow Red Bias", self._pk("SHADOW_RED_BIAS"), 0.95, 1.05, 0.001)
+        self._slider(adv, "Shadow Green Bias", self._pk("SHADOW_GREEN_BIAS"), 0.95, 1.05, 0.001)
+        self._slider(adv, "Shadow Blue Bias", self._pk("SHADOW_BLUE_BIAS"), 0.95, 1.05, 0.001)
+        self._toggle(adv, "Opponent Tuning", "OPPONENT_TUNING", rebuild_ui=True)
+        self._slider(adv, "Opponent Strength", "OPPONENT_STRENGTH", 0.0, 1.0, 0.01)
+
+        # ── Global ──
+        g = self.frames["Global"]
+        self._slider(g, "Shadow Pop Strength", "SHADOW_POP_STRENGTH", 0.0, 1.0, 0.01)
+        self._toggle(g, "Preserve HUD Highlights", "PRESERVE_HUD_HIGHLIGHTS")
