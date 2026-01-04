@@ -15,6 +15,19 @@ import numpy as np
 
 
 class GammaController:
+    __slots__ = (
+        "root",
+        "pipeline",
+        "user32",
+        "gdi32",
+        "hdc",
+        "executor",
+        "current_mode",
+        "_lock",
+        "_timer",
+        "_last_sig",
+    )
+
     def __init__(self, root, pipeline, user32, gdi32, hdc, executor):
         self.root = root
         self.pipeline = pipeline
@@ -55,6 +68,12 @@ class GammaController:
         self.set_mode(None if self.current_mode == mode else mode)
 
     def set_mode(self, mode):
+        # Monolith parity: clear adaptive smoothing state on profile toggles
+        try:
+            self.pipeline._adaptive_state.clear()
+        except Exception:
+            pass
+
         self.current_mode = mode
         self.rebuild(force=True)
 
@@ -64,7 +83,6 @@ class GammaController:
         Redundant applies are skipped via signature comparison.
         """
         arr = self._build_ramp()
-
         self.executor.submit(self._apply, arr, force=force)
 
     def rebuild_debounced(self, delay: float = 0.03):

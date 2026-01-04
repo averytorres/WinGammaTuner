@@ -9,7 +9,6 @@ Public API:
     - update()
     - get_metrics() -> (avg_luma, shadow_density, edge_strength, motion_strength)
 """
-
 from __future__ import annotations
 
 import time
@@ -17,9 +16,16 @@ from threading import Lock, Event
 from typing import Callable, Tuple
 
 import numpy as np
+import ctypes
 
 
 class SceneAnalyzer:
+    __slots__ = (
+        "user32", "gdi32", "hdc", "config", "is_active",
+        "avg_luma", "shadow_density", "edge_strength", "motion_strength",
+        "_prev_luma", "_lock", "_last_update", "_stop_evt",
+    )
+
     def __init__(self, user32, gdi32, hdc, config: dict, is_active: Callable[[], bool]):
         self.user32 = user32
         self.gdi32 = gdi32
@@ -39,10 +45,7 @@ class SceneAnalyzer:
         self._last_update = 0.0
         self._stop_evt = Event()
 
-    # ───────────────────────── Lifecycle ─────────────────────────
-
     def start(self, executor) -> None:
-        """Start background sampling loop (safe to call once)."""
         executor.submit(self._worker_loop)
 
     def stop(self) -> None:
@@ -57,16 +60,15 @@ class SceneAnalyzer:
                 self.motion_strength,
             )
 
-    # ───────────────────────── Worker loop ─────────────────────────
-
     def _worker_loop(self) -> None:
+        sleep = time.sleep
         while not self._stop_evt.is_set():
             if not self.is_active() or not self._adaptive_enabled():
-                time.sleep(0.25)
+                sleep(0.25)
                 continue
 
             self.update()
-            time.sleep(0.05)
+            sleep(0.05)
 
     def _adaptive_enabled(self) -> bool:
         c = self.config
@@ -82,13 +84,7 @@ class SceneAnalyzer:
             )
         )
 
-    # ───────────────────────── Desktop sampling ─────────────────────────
-
     def _sample_desktop_rgb(self, w: int = 64, h: int = 64) -> np.ndarray:
-        """
-        Capture a low-resolution RGB sample of the current desktop.
-        Returns float32 RGB array in [0,1].
-        """
         user32 = self.user32
         gdi32 = self.gdi32
 
@@ -107,21 +103,17 @@ class SceneAnalyzer:
                 0, 0,
                 screen_w,
                 screen_h,
-                0x00CC0020,  # SRCCOPY
+                0x00CC0020,
             )
 
-            import ctypes
             buf = (ctypes.c_ubyte * (w * h * 4))()
             gdi32.GetBitmapBits(bmp, len(buf), buf)
 
             arr = np.frombuffer(buf, dtype=np.uint8).reshape((h, w, 4))
             return arr[:, :, :3].astype(np.float32) * (1.0 / 255.0)
-
         finally:
             gdi32.DeleteObject(bmp)
             gdi32.DeleteDC(memdc)
-
-    # ───────────────────────── Metrics ─────────────────────────
 
     def _compute_motion(self, luma: np.ndarray) -> float:
         if not self.config.get("MOTION_AWARE_SHADOWS", False):
@@ -137,13 +129,6 @@ class SceneAnalyzer:
         return float(np.abs(luma - prev).mean())
 
     def update(self) -> None:
-        """
-        Update metrics with built-in guards:
-          - inactive / disabled
-          - 5 Hz rate limit
-          - hitch protection
-          - minimized / no foreground window
-        """
         if not self.is_active() or not self._adaptive_enabled():
             self._last_update = time.time()
             return
@@ -151,12 +136,10 @@ class SceneAnalyzer:
         now = time.time()
         delta = now - self._last_update
 
-        # Hitch / stall guard
         if delta > 0.6:
             self._last_update = now
             return
 
-        # 5 Hz cap
         if delta < 0.2:
             return
 
@@ -192,7 +175,5 @@ class SceneAnalyzer:
                     )
                 else:
                     self.motion_strength = 0.0
-
         except Exception:
-            # Analyzer must never crash the pipeline
             return

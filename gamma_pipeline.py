@@ -21,6 +21,11 @@ class Mode(Enum):
 DEFAULT_CONFIG: Dict[str, object] = {
     # Global
     "GLOBAL_BRIGHTNESS": 1.0,
+    "GLOBAL_BRIGHTNESS_ENABLED": False,
+    "GLOBAL_BRIGHTNESS_INDOOR": 1.0,
+    "GLOBAL_BRIGHTNESS_ENABLED_INDOOR": False,
+    "GLOBAL_BRIGHTNESS_OUTDOOR": 1.0,
+    "GLOBAL_BRIGHTNESS_ENABLED_OUTDOOR": False,
     "SHADOW_POP_STRENGTH": 0.20,
     "PRESERVE_HUD_HIGHLIGHTS": True,
 
@@ -62,7 +67,7 @@ DEFAULT_CONFIG: Dict[str, object] = {
     "BLUE_MULTIPLIER_OUTDOOR": 1.0,
     "SHADOW_SIGMOID_BOOST_OUTDOOR": 0.18,
 
-    # ================= Adaptive defaults (monolith default_config.update) =================
+    # ================= Adaptive defaults =================
     "HISTOGRAM_ADAPTIVE": True,
     "HISTOGRAM_STRENGTH": 0.30,
     "HISTOGRAM_MIN_LUMA": 0.12,
@@ -92,29 +97,28 @@ DEFAULT_CONFIG: Dict[str, object] = {
     "MOTION_SHADOW_MIN_MOTION": 0.015,
 }
 
-# Shared LUT x-axis + masks (monolith parity)
+# Shared LUT x-axis + masks
 X_AXIS = np.linspace(0.0, 1.0, 256)
 MID_05_MASK = X_AXIS < 0.5
 MID_07_MASK = X_AXIS < 0.7
 HI_085_MASK = X_AXIS > 0.85
 
-# Luminance-weighted dithering noise (monolith parity)
+# Luminance-weighted dithering noise
 _DITHER_NOISE = (np.random.rand(256) - 0.5) * (1.0 / 65535.0)
 
 
 def _profile(cfg: Dict[str, object], mode: Mode) -> Dict[str, float]:
-    suf = "_" + mode.value.upper()
+    suffix = "_" + mode.value.upper()
     p: Dict[str, float] = {}
 
-    # profile-scoped values
+    # Profile-scoped values
     for k, v in cfg.items():
-        if k.endswith(suf):
-            try:
-                p[k.replace(suf, "")] = float(v)
-            except Exception:
-                p[k.replace(suf, "")] = float(DEFAULT_CONFIG.get(k, 0.0))  # type: ignore[arg-type]
+        if k.endswith(suffix):
+            key = k.replace(suffix, "")
+            p[key] = v
 
-    # global values
+
+    # Global values
     for k in (
         "SHADOW_POP_STRENGTH",
         "PRESERVE_HUD_HIGHLIGHTS",
@@ -142,10 +146,7 @@ def _profile(cfg: Dict[str, object], mode: Mode) -> Dict[str, float]:
         "MOTION_STRENGTH_OUTDOOR",
     ):
         if k in cfg:
-            try:
-                p[k] = float(cfg[k])  # type: ignore[arg-type]
-            except Exception:
-                p[k] = float(DEFAULT_CONFIG.get(k, 0.0))  # type: ignore[arg-type]
+            p[k] = cfg[k]
 
     p["PROFILE"] = mode.value.upper()
     return p
@@ -153,10 +154,6 @@ def _profile(cfg: Dict[str, object], mode: Mode) -> Dict[str, float]:
 
 @lru_cache(maxsize=128)
 def _base_curve(gamma: float, offset: float) -> np.ndarray:
-    """
-    Cached base curve, identical shape contract to monolith base_curve().
-    Returns float64 array in [0,1] length 256.
-    """
     g = float(gamma)
     o = float(offset)
     y = np.power(np.clip(X_AXIS + o, 0.0, 1.0), 1.0 / g)
@@ -164,12 +161,12 @@ def _base_curve(gamma: float, offset: float) -> np.ndarray:
 
 
 class GammaPipeline:
+    __slots__ = ("config", "scene_analyzer", "_adaptive_state")
+
     def __init__(self, config: Dict[str, object], scene_analyzer=None):
         self.config = config
         self.scene_analyzer = scene_analyzer
         self._adaptive_state: Dict[str, float] = {}
-
-    # ───────────────────────── Public ─────────────────────────
 
     @staticmethod
     def identity_ramp() -> np.ndarray:
@@ -180,16 +177,10 @@ class GammaPipeline:
         if mode is None:
             return self.identity_ramp()
 
-        p = _profile(self.config, mode)
-        return self._build_ramp_array(p)
-
-    # ───────────────────────── Metrics helpers ─────────────────────────
+        profile = _profile(self.config, mode)
+        return self._build_ramp_array(profile)
 
     def _get_scene_metrics(self) -> Tuple[float, float, float, float]:
-        """
-        Returns (avg_luma, shadow_density, edge_strength, motion_strength).
-        If analyzer is missing, returns stable neutral metrics.
-        """
         if self.scene_analyzer is None:
             return (0.5, 0.0, 0.0, 0.0)
         try:
@@ -547,12 +538,15 @@ class GammaPipeline:
         b = np.clip(b + dither, 0.0, 1.0)
 
         # Exposure (global brightness) – folded into final scale for monolith parity
-        exposure = float(p.get("GLOBAL_BRIGHTNESS", 1.0))
+        if p.get("GLOBAL_BRIGHTNESS_ENABLED", False):
+            exposure = float(p.get("GLOBAL_BRIGHTNESS", 1.0))
+        else:
+            exposure = 1.0
 
-        exposure_enabled = bool(p.get("GLOBAL_BRIGHTNESS_ENABLED", True))
-        exposure = exposure if exposure_enabled else 1.0
 
-        scale = 65535.0 * float(p.get("VIBRANCE", 1.0)) * exposure
+        EXPOSURE_COMP = 1.03  # monolith perceptual parity
+        scale = 65535.0 * float(p.get("VIBRANCE", 1.0)) * exposure * EXPOSURE_COMP
+
         return np.concatenate([
             np.clip(r * scale, 0, 65535).astype(np.uint16),
             np.clip(g * scale, 0, 65535).astype(np.uint16),

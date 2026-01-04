@@ -13,6 +13,8 @@ def _decimals(step: float) -> int:
 
 
 class CanvasSlider(tk.Canvas):
+    __slots__ = ("min", "max", "step", "command", "usable", "value", "thumb")
+
     def __init__(self, parent, mn, mx, value, command, step, *, bg):
         super().__init__(parent, width=240, height=20, bg=bg, highlightthickness=0)
         self.min = float(mn)
@@ -34,12 +36,14 @@ class CanvasSlider(tk.Canvas):
     def _quantize(self, v: float) -> float:
         return round(v / self.step) * self.step if self.step > 0 else v
 
-    def set_value(self, v: float, *, notify=True, dragging=False):
+    def set_value(self, v: float, *, notify: bool = True, dragging: bool = False):
         v = max(self.min, min(self.max, float(v)))
         self.value = self._quantize(v)
+
         span = self.max - self.min
         x = int((self.value - self.min) / span * self.usable) if span else 0
         self.coords(self.thumb, x, 4, x + 12, 16)
+
         if notify:
             self.command(self.value, dragging)
 
@@ -69,7 +73,27 @@ class CanvasSlider(tk.Canvas):
 
 
 class GammaUI:
-    def __init__(self, root, controller, config: Dict[str, object], defaults: Dict[str, object], config_mgr):
+    __slots__ = (
+        "root",
+        "controller",
+        "config",
+        "defaults",
+        "config_mgr",
+        "bg",
+        "fg",
+        "btn",
+        "window",
+        "frames",
+    )
+
+    def __init__(
+        self,
+        root,
+        controller,
+        config: Dict[str, object],
+        defaults: Dict[str, object],
+        config_mgr,
+    ):
         self.root = root
         self.controller = controller
         self.config = config
@@ -132,8 +156,15 @@ class GammaUI:
         canvas.configure(yscrollcommand=scrollbar.set)
         canvas.create_window((0, 0), window=frame, anchor="nw")
 
-        frame.bind("<Configure>", lambda _: canvas.configure(scrollregion=canvas.bbox("all")))
-        self.root.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-e.delta / 120), "units"), add="+")
+        frame.bind(
+            "<Configure>",
+            lambda _: canvas.configure(scrollregion=canvas.bbox("all")),
+        )
+        self.root.bind_all(
+            "<MouseWheel>",
+            lambda e: canvas.yview_scroll(int(-e.delta / 120), "units"),
+            add="+",
+        )
 
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -145,7 +176,14 @@ class GammaUI:
         row = tk.Frame(parent, bg=self.bg)
         row.pack(fill=tk.X, padx=8, pady=5)
 
-        tk.Label(row, text=label, bg=self.bg, fg=self.fg, width=24, anchor="w").pack(side=tk.LEFT)
+        tk.Label(
+            row,
+            text=label,
+            bg=self.bg,
+            fg=self.fg,
+            width=24,
+            anchor="w",
+        ).pack(side=tk.LEFT)
 
         dec = _decimals(step)
         init = float(self._get(key, mn))
@@ -162,15 +200,25 @@ class GammaUI:
         slider = CanvasSlider(row, mn, mx, init, on_change, step, bg=self.bg)
         slider.pack(side=tk.LEFT, padx=6)
 
-        value_label = tk.Label(row, textvariable=val, bg=self.bg, fg="#aaa", width=8)
+        value_label = tk.Label(
+            row,
+            textvariable=val,
+            bg=self.bg,
+            fg="#aaa",
+            width=8,
+        )
         value_label.pack(side=tk.LEFT)
 
         tk.Button(
-            row, text="Reset", bg=self.btn, fg=self.fg, width=6,
-            command=lambda: slider.set_value(self.defaults.get(key, init))
+            row,
+            text="Reset",
+            bg=self.btn,
+            fg=self.fg,
+            width=6,
+            command=lambda: slider.set_value(self.defaults.get(key, init)),
         ).pack(side=tk.LEFT)
 
-    def _toggle(self, parent, label, key, *, rebuild_ui=False):
+    def _toggle(self, parent, label, key, *, rebuild_ui: bool = False):
         var = tk.BooleanVar(value=bool(self._get(key, False)))
 
         def on_toggle():
@@ -180,8 +228,16 @@ class GammaUI:
             if rebuild_ui:
                 self.rebuild()
 
-        tk.Checkbutton(parent, text=label, variable=var, command=on_toggle,
-                       bg=self.bg, fg=self.fg, selectcolor=self.bg).pack(anchor="w", padx=8, pady=4)
+        tk.Checkbutton(
+            parent,
+            text=label,
+            variable=var,
+            command=on_toggle,
+            bg=self.bg,
+            fg=self.fg,
+            selectcolor=self.bg,
+        ).pack(anchor="w", padx=8, pady=4)
+
         return var.get()
 
     # ───────── rebuild ─────────
@@ -202,7 +258,7 @@ class GammaUI:
                     f,
                     text="Gamma OFF\nF8 / F9",
                     fg="red",
-                    bg=self.bg
+                    bg=self.bg,
                 ).pack(pady=20)
             return
 
@@ -261,4 +317,3 @@ class GammaUI:
         self._toggle(g, "Preserve HUD Highlights", "PRESERVE_HUD_HIGHLIGHTS")
         self._toggle(g, "Global Brightness Enable", self._pk("GLOBAL_BRIGHTNESS_ENABLED"))
         self._slider(g, "Global Brightness", self._pk("GLOBAL_BRIGHTNESS"), 0.5, 1.5, 0.01)
-
