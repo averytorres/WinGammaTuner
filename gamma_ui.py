@@ -259,3 +259,6 @@ class GammaUI:
         g = self.frames["Global"]
         self._slider(g, "Shadow Pop Strength", "SHADOW_POP_STRENGTH", 0.0, 1.0, 0.01)
         self._toggle(g, "Preserve HUD Highlights", "PRESERVE_HUD_HIGHLIGHTS")
+        self._toggle(g, "Global Brightness Enable", self._pk("GLOBAL_BRIGHTNESS_ENABLED"))
+        self._slider(g, "Global Brightness", self._pk("GLOBAL_BRIGHTNESS"), 0.5, 1.5, 0.01)
+

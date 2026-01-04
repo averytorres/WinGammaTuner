@@ -116,7 +116,6 @@ def _profile(cfg: Dict[str, object], mode: Mode) -> Dict[str, float]:
 
     # global values
     for k in (
-        "GLOBAL_BRIGHTNESS",
         "SHADOW_POP_STRENGTH",
         "PRESERVE_HUD_HIGHLIGHTS",
         "HISTOGRAM_ADAPTIVE",
@@ -547,13 +546,13 @@ class GammaPipeline:
         g = np.clip(g + dither, 0.0, 1.0)
         b = np.clip(b + dither, 0.0, 1.0)
 
-        # Exposure (global brightness)
-        exposure = float(cfg.get("GLOBAL_BRIGHTNESS", 1.0))
-        r *= exposure
-        g *= exposure
-        b *= exposure
+        # Exposure (global brightness) – folded into final scale for monolith parity
+        exposure = float(p.get("GLOBAL_BRIGHTNESS", 1.0))
 
-        scale = 65535.0 * float(p.get("VIBRANCE", 1.0))
+        exposure_enabled = bool(p.get("GLOBAL_BRIGHTNESS_ENABLED", True))
+        exposure = exposure if exposure_enabled else 1.0
+
+        scale = 65535.0 * float(p.get("VIBRANCE", 1.0)) * exposure
         return np.concatenate([
             np.clip(r * scale, 0, 65535).astype(np.uint16),
             np.clip(g * scale, 0, 65535).astype(np.uint16),

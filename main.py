@@ -2,7 +2,13 @@ from __future__ import annotations
 
 MONOLITH_DEFAULTS = {
     "SHADOW_POP_STRENGTH": 0.20,          # Gentle global boost for silhouette clarity without washout
-    "PRESERVE_HUD_HIGHLIGHTS": True,      # Required due to bright interiors / snow / UI overlap
+    "PRESERVE_HUD_HIGHLIGHTS": True,
+    "GLOBAL_BRIGHTNESS_INDOOR": 1.0,
+    "GLOBAL_BRIGHTNESS_ENABLED_INDOOR": True,
+
+    "GLOBAL_BRIGHTNESS_OUTDOOR": 1.0,
+    "GLOBAL_BRIGHTNESS_ENABLED_OUTDOOR": True,
+      # Required due to bright interiors / snow / UI overlap
 
     # ================= INDOOR PROFILE (Primary for this map) =================
 
